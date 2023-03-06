@@ -13,7 +13,11 @@ defmodule ExFacto.Utils do
     |> :binary.decode_unsigned()
   end
 
-  def new_serial_id(), do: new_rand_int()
+  def new_event_id() do
+    32
+    |> :crypto.strong_rand_bytes()
+    |> Base.encode16(case: :lower)
+  end
 
   def new_private_key() do
     {:ok, sk} =
@@ -83,9 +87,7 @@ defmodule ExFacto.Utils do
   @spec serialize_with_count(list(), any()) :: {non_neg_integer(), binary}
   def serialize_with_count(items, serialize_func) do
     Enum.reduce(items, {0, <<>>}, fn item, {ct, acc} ->
-      {ct+1, acc <> serialize_func.(item)}
+      {ct + 1, acc <> serialize_func.(item)}
     end)
   end
-
-
 end

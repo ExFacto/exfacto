@@ -22,8 +22,7 @@ defmodule Exfacto.MixProject do
   defp deps do
     [
       {:poison, "~> 5.0"},
-      {:bitcoinex,
-       github: "SachinMeier/bitcoinex", branch: "master"}
+      {:bitcoinex, github: "SachinMeier/bitcoinex", branch: "master"}
     ]
   end
 end

@@ -8,7 +8,6 @@ defmodule ExFacto.ContractTest do
   def get_int(m, key), do: Map.fetch!(m, key)
 
   describe "contract_id" do
-
     # test "calculate temp_contract_id" do
 
     # end
@@ -28,9 +27,6 @@ defmodule ExFacto.ContractTest do
         contract_id = Contract.calculate_contract_id(fund_txid, fund_vout, temp_contract_id)
         assert contract_id == c_contract_id
       end
-
-
     end
   end
-
 end

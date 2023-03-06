@@ -29,8 +29,8 @@ defmodule ExFacto.Oracle do
   end
 
   @type oracle_info :: %{
-    announcement: Announcement.t()
-  }
+          announcement: Announcement.t()
+        }
 
   def serialize_oracle_info(o) do
     Announcement.serialize(o.announcement)
@@ -66,15 +66,15 @@ defmodule ExFacto.Oracle do
   end
 
   # used for signing outcomes (strings)
-  def attestation_sighash(attestation), do: oracle_tagged_hash(attestation, "attestation/v0")
+  def attestation_sighash(outcome), do: oracle_tagged_hash(outcome, "attestation/v0")
 
   def oracle_tagged_hash(msg, tag) do
     BtcUtils.tagged_hash("DLC/oracle/#{tag}", msg) |> :binary.decode_unsigned()
   end
 
-  def sign_attestation(msg, sk) do
+  def sign_outcome(outcome, sk) do
     aux = Utils.new_rand_int()
-    sighash = attestation_sighash(msg)
+    sighash = attestation_sighash(outcome)
     Schnorr.sign(sk, sighash, aux)
   end
 end
@@ -87,10 +87,10 @@ defmodule ExFacto.Oracle.Announcement do
   alias ExFacto.Event
 
   @type t :: %__MODULE__{
-    signature: Signature.t(),
-    public_key: Point.t(),
-    event: Event.t()
-  }
+          signature: Signature.t(),
+          public_key: Point.t(),
+          event: Event.t()
+        }
 
   defstruct [
     :signature,
@@ -108,23 +108,32 @@ defmodule ExFacto.Oracle.Announcement do
 
   def serialize(a) do
     Signature.serialize_signature(a.signature) <>
-    Point.x_bytes(a.public_key) <>
-    Event.serialize(a.event)
+      Point.x_bytes(a.public_key) <>
+      Event.serialize(a.event)
+  end
+
+  def parse(<<sig::binary-size(64), pk::binary-size(32), event::binary>>) do
+    signature = Signature.parse_signature(sig)
+    {:ok, point} = Point.lift_x(pk)
+    {event, rest} = Event.parse(event)
+
+    announcement = new(signature, point, event)
+
+    {announcement, rest}
   end
 end
 
 defmodule ExFacto.Oracle.Attestation do
-
   alias ExFacto.Utils
   alias Bitcoinex.Secp256k1.{Signature, Point}
   alias ExFacto.Messaging
 
   @type t :: %__MODULE__{
-    event_id: String.t(),
-    public_key: Point.t(),
-    signatures: list(Signature.t()),
-    outcomes: list(String.t())
-  }
+          event_id: String.t(),
+          public_key: Point.t(),
+          signatures: list(Signature.t()),
+          outcomes: list(String.t())
+        }
 
   defstruct [
     :event_id,
@@ -134,14 +143,13 @@ defmodule ExFacto.Oracle.Attestation do
   ]
 
   def new(event_id, public_key = %Point{}, signatures, outcomes)
-    when length(signatures) == length(outcomes) do
-
-      %__MODULE__{
-        event_id: event_id,
-        public_key: public_key,
-        signatures: signatures,
-        outcomes: outcomes
-      }
+      when length(signatures) == length(outcomes) do
+    %__MODULE__{
+      event_id: event_id,
+      public_key: public_key,
+      signatures: signatures,
+      outcomes: outcomes
+    }
   end
 
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#oracle_attestation
@@ -156,5 +164,12 @@ defmodule ExFacto.Oracle.Attestation do
       Messaging.ser(sig_ct, :u16) <>
       ser_sigs <>
       ser_outcomes
+  end
+
+  def parse(msg) do
+    {event_id, msg} = Utils.parse_compact_size_value(msg)
+    {pk, msg} = Messaging.par(msg, 32)
+    {:ok, pubkey} = Point.lift_x(pk)
+    {sig_ct, msg} = Utils.get_counter(msg)
   end
 end

@@ -4,11 +4,11 @@ defmodule ExFacto.Contract do
   alias ExFacto.{Utils, Oracle, Messaging}
 
   @type t :: %__MODULE__{
-    total_collateral: non_neg_integer(),
-    # For now, no numerics
-    descriptor: contract_descriptor_enum(),
-    oracle_info: Oracle.oracle_info()
-  }
+          total_collateral: non_neg_integer(),
+          # For now, no numerics
+          descriptor: contract_descriptor_enum(),
+          oracle_info: Oracle.oracle_info()
+        }
 
   defstruct [
     :total_collateral,
@@ -19,20 +19,17 @@ defmodule ExFacto.Contract do
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#single_contract_info
   def serialize(c) do
     Messaging.ser(c.total_collateral, :u64) <>
-    serialize_contract_descriptor(c.descriptor) <>
-    Oracle.serialize_oracle_info(c.oracle_info)
+      serialize_contract_descriptor(c.descriptor) <>
+      Oracle.serialize_oracle_info(c.oracle_info)
   end
 
   # @type contract_descriptor :: contract_descriptor_enum
 
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#enumerated_contract_descriptor
-  @type contract_descriptor_enum :: %{ String.t() => non_neg_integer() }
+  @type contract_descriptor_enum :: list({String.t(), non_neg_integer()})
 
-  def serialize_contract_descriptor(e) do
-    {ct, ser_outcomes} =
-      e
-      |> Map.to_list()
-      |> Utils.serialize_with_count(&serialize_outcome_payout/1)
+  def serialize_contract_descriptor(descriptor) do
+    {ct, ser_outcomes} = Utils.serialize_with_count(descriptor, &serialize_outcome_payout/1)
     Utils.big_size(ct) <> ser_outcomes
   end
 
@@ -47,11 +44,15 @@ defmodule ExFacto.Contract do
   #   rounding_intervals: list(any()),
   # }
 
-
-  def calculate_contract_id(<<funding_txid::big-size(256)>>, funding_vout, <<contract_temp_id::big-size(256)>>) do
+  def calculate_contract_id(
+        <<funding_txid::big-size(256)>>,
+        funding_vout,
+        <<contract_temp_id::big-size(256)>>
+      ) do
     # why does the spec say the vout will only affect the last 2 bytes of the txid XOR temp_id when vout is 4 bytes
     # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Protocol.md#definition-of-contract_id
     vout_binary = Bitwise.band(funding_vout, 0xFFFF)
+
     Bitwise.bxor(funding_txid, contract_temp_id)
     |> Bitwise.bxor(vout_binary)
     |> :binary.encode_unsigned()
@@ -60,7 +61,7 @@ end
 
 defmodule ExFacto.Contract.Offer do
   alias ExFacto.{Messaging, Utils, Contract}
-  alias Bitcoinex.Secp256k1.{Point, Signature }
+  alias Bitcoinex.Secp256k1.{Point, Signature}
   alias Bitcoinex.Script
 
   @offer_dlc_type 42778
@@ -70,15 +71,14 @@ defmodule ExFacto.Contract.Offer do
           contract_flags: non_neg_integer(),
           chain_hash: <<_::256>>,
           temp_contract_id: <<_::256>>,
-          contract_info: Contract.t(), # TODO type?
+          # TODO type?
+          contract_info: Contract.t(),
           funding_pubkey: Point.t(),
           payout_script: Script.t(),
-          payout_serial_id: non_neg_integer(),
           offer_collateral_amount: non_neg_integer(),
-          funding_inputs: list(), # funding_input type
+          # funding_input type
+          funding_inputs: list(),
           change_script: Script.t(),
-          change_serial_id: non_neg_integer(),
-          fund_output_serial_id: non_neg_integer(),
           feerate: non_neg_integer(),
           cet_locktime: non_neg_integer(),
           refund_locktime: non_neg_integer(),
@@ -93,12 +93,9 @@ defmodule ExFacto.Contract.Offer do
     :contract_info,
     :funding_pubkey,
     :payout_script,
-    :payout_serial_id,
     :offer_collateral_amount,
     :funding_inputs,
     :change_script,
-    :change_serial_id,
-    :fund_output_serial_id,
     :feerate,
     :cet_locktime,
     :refund_locktime,
@@ -113,8 +110,6 @@ defmodule ExFacto.Contract.Offer do
         funding_pubkey,
         payout_script,
         change_script,
-        offer_collateral_amount,
-        funding_inputs,
         feerate,
         cet_locktime,
         refund_locktime
@@ -123,9 +118,6 @@ defmodule ExFacto.Contract.Offer do
     contract_flags = 0
 
     temp_contract_id = new_temp_contract_id()
-    payout_serial_id = Utils.new_serial_id()
-    change_serial_id = Utils.new_serial_id()
-    fund_output_serial_id = Utils.new_serial_id()
 
     %__MODULE__{
       version: version,
@@ -135,12 +127,9 @@ defmodule ExFacto.Contract.Offer do
       contract_info: contract_info,
       funding_pubkey: funding_pubkey,
       payout_script: payout_script,
-      payout_serial_id: payout_serial_id,
       offer_collateral_amount: offer_collateral_amount,
       funding_inputs: funding_inputs,
       change_script: change_script,
-      change_serial_id: change_serial_id,
-      fund_output_serial_id: fund_output_serial_id,
       feerate: feerate,
       cet_locktime: cet_locktime,
       refund_locktime: refund_locktime
@@ -156,12 +145,9 @@ defmodule ExFacto.Contract.Offer do
       Contract.serialize(o.contract_info) <>
       Point.x_bytes(o.funding_pubkey) <>
       Utils.script_with_big_size(o.payout_script) <>
-      Messaging.ser(o.payout_serial_id, :u64) <>
       Messaging.ser(o.offer_collateral_amount, :u64) <>
       Messaging.serialize_funding_inputs(o.funding_inputs) <>
       Utils.script_with_big_size(o.change_script) <>
-      Messaging.ser(o.change_serial_id, :u64) <>
-      Messaging.ser(o.fund_output_serial_id, :u64) <>
       Messaging.ser(o.feerate, :u64) <>
       Messaging.ser(o.cet_locktime, :u32) <>
       Messaging.ser(o.refund_locktime, :u32) <>
@@ -181,22 +167,24 @@ defmodule ExFacto.Contract.Accept do
 
   @accept_dlc_type 42780
 
+  # BREAK with DLC Spec: add dummy_tapkey_tweak
   @type t :: %__MODULE__{
-    version: non_neg_integer(),
-    chain_hash: <<_::256>>,
-    temp_contract_id: String.t(),
-    funding_pubkey: Point.t(),
-    payout_script: Script.t(),
-    payout_serial_id: non_neg_integer(),
-    change_script: Script.t(),
-    change_serial_id: non_neg_integer(),
-    collateral_amount: non_neg_integer(),
-    funding_inputs: list(Messaging.funding_input_info()),
-    cet_adaptor_signatures: list({Signature.t(), bool}),
-    refund_signature: Signature.t(),
-    negotiation_fields: list(), # unused
-    tlvs: list(), # unused
-  }
+          version: non_neg_integer(),
+          chain_hash: <<_::256>>,
+          temp_contract_id: String.t(),
+          funding_pubkey: Point.t(),
+          payout_script: Script.t(),
+          change_script: Script.t(),
+          collateral_amount: non_neg_integer(),
+          funding_inputs: list(Messaging.funding_input_info()),
+          cet_adaptor_signatures: list({Signature.t(), bool}),
+          refund_signature: Signature.t(),
+          dummy_tapkey_tweak: non_neg_integer(),
+          # unused
+          negotiation_fields: list(),
+          # unused
+          tlvs: list()
+        }
 
   defstruct [
     :version,
@@ -204,23 +192,29 @@ defmodule ExFacto.Contract.Accept do
     :temp_contract_id,
     :funding_pubkey,
     :payout_script,
-    :payout_serial_id,
     :change_script,
-    :change_serial_id,
     :collateral_amount,
     :funding_inputs,
     :cet_adaptor_signatures,
     :refund_signature,
+    :dummy_tapkey_tweak,
     :negotiation_fields,
     :tlvs
   ]
 
-  def new(chain_hash, temp_contract_id, funding_pubkey, payout_script, change_script, collateral_amount, funding_inputs, cet_adaptor_signatures, refund_signature) do
+  def new(
+        chain_hash,
+        temp_contract_id,
+        funding_pubkey,
+        payout_script,
+        change_script,
+        collateral_amount,
+        funding_inputs,
+        cet_adaptor_signatures,
+        refund_signature,
+        dummy_tapkey_tweak
+      ) do
     version = Utils.get_protocol_version()
-
-    payout_serial_id = Utils.new_serial_id()
-
-    change_serial_id = Utils.new_serial_id()
 
     %__MODULE__{
       version: version,
@@ -228,13 +222,12 @@ defmodule ExFacto.Contract.Accept do
       temp_contract_id: temp_contract_id,
       funding_pubkey: funding_pubkey,
       payout_script: payout_script,
-      payout_serial_id: payout_serial_id,
       change_script: change_script,
-      change_serial_id: change_serial_id,
       collateral_amount: collateral_amount,
       funding_inputs: funding_inputs,
       cet_adaptor_signatures: cet_adaptor_signatures,
       refund_signature: refund_signature,
+      dummy_tapkey_tweak: dummy_tapkey_tweak
       # TODO: negotiation_fields
       # TODO: TLVs
     }
@@ -247,36 +240,37 @@ defmodule ExFacto.Contract.Accept do
       Messaging.ser(a.collateral_amount, :u64) <>
       Point.x_bytes(a.funding_pubkey) <>
       Utils.script_with_big_size(a.payout_script) <>
-      Messaging.ser(a.payout_serial_id, :u64) <>
       Messaging.serialize_funding_inputs(a.funding_inputs) <>
       Utils.script_with_big_size(a.change_script) <>
-      Messaging.ser(a.change_serial_id, :u64) <>
       serialize_cet_adaptor_signatures(a.cet_adaptor_signatures) <>
       Signature.serialize_signature(a.refund_signature) <>
+      Messaging.ser(a.dummy_tapkey_tweak, :u64) <>
       serialize_negotiation_fields(a.negotiation_fields) <>
       serialize_tlvs(a.tlvs)
   end
 
   @type cet_adaptor_signature :: %{
-    # BREAK WITH DLC Spec
-    txid: <<_::256>>,
-    pubkey: Point.t(),
-    adaptor_signature: Signature.t(),
-    was_negated: boolean()
-  }
+          # BREAK WITH DLC Spec
+          txid: <<_::256>>,
+          pubkey: Point.t(),
+          adaptor_signature: Signature.t(),
+          was_negated: boolean()
+        }
 
-def serialize_cet_adaptor_signatures(cet_adaptor_signatures) do
-{ct, ser_sigs} = Utils.serialize_with_count(cet_adaptor_signatures, &serialize_cet_adaptor_signature/1)
-Utils.big_size(ct) <> ser_sigs
-end
+  def serialize_cet_adaptor_signatures(cet_adaptor_signatures) do
+    {ct, ser_sigs} =
+      Utils.serialize_with_count(cet_adaptor_signatures, &serialize_cet_adaptor_signature/1)
 
-# BREAK WITH DLC SPEC to use Schnorr Adaptor Sigs
-def serialize_cet_adaptor_signature(cas) do
-cas.txid <>
-Point.x_bytes(cas.pubkey) <>
-Signature.serialize_signature(cas.adaptor_signature) <>
-Messaging.ser(cas.was_negated, :bool)
-end
+    Utils.big_size(ct) <> ser_sigs
+  end
+
+  # BREAK WITH DLC SPEC to use Schnorr Adaptor Sigs
+  def serialize_cet_adaptor_signature(cas) do
+    cas.txid <>
+      Point.x_bytes(cas.pubkey) <>
+      Signature.serialize_signature(cas.adaptor_signature) <>
+      Messaging.ser(cas.was_negated, :bool)
+  end
 
   # unimplemented
   def serialize_negotiation_fields(_), do: <<>>
