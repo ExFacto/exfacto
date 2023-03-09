@@ -167,9 +167,15 @@ defmodule ExFacto.Messaging do
     {bin, rest}
   end
 
+  def parse_items(msg, 0, items, _), do: {Enum.reverse(items), msg}
+  def parse_items(msg, ct, items, parse_func) do
+    {item, msg} = parse_func.(msg)
+    parse_items(msg, ct-1, [item | items], parse_func)
+  end
+
   def parse(msg) do
     {type, msg} = Utils.parse_compact_size_value(msg)
-    type_atom = Map.fetch!(msg_types(), type)
+    type_atom = Map.fetch!(msg_types(), :binary.decode_unsigned(type))
     parser(type_atom, msg)
   end
 
@@ -194,6 +200,7 @@ defmodule ExFacto.Messaging do
     {refund_locktime, _msg} = par(msg, :u32)
     # TODO: TLVs
 
+    # TODO: use new
     %Contract.Offer{
       version: version,
       contract_flags: contract_flags,
@@ -202,7 +209,7 @@ defmodule ExFacto.Messaging do
       contract_info: contract_info,
       funding_pubkey: funding_pubkey,
       payout_script: payout_script,
-      offer_collateral_amount: offer_collateral_amount,
+      collateral_amount: offer_collateral_amount,
       funding_inputs: funding_inputs,
       change_script: change_script,
       feerate: fee_rate,
@@ -243,20 +250,20 @@ defmodule ExFacto.Messaging do
     }
   end
 
-  def parser(:oracle_announcement, msg), do: Announcement.parse(msg)
+  # def parser(:oracle_announcement, msg), do: Announcement.parse(msg)
 
-  def parser(:oracle_attestation, msg), do: Attestation.parse(msg)
+  # def parser(:oracle_attestation, msg), do: Attestation.parse(msg)
 
-  def parser(:oracle_event, msg), do: Event.parse(msg)
+  # def parser(:oracle_event, msg), do: Event.parse(msg)
 
-  def parser(:funding_inputs, msg) do
-  end
+  # def parser(:funding_inputs, msg) do
+  # end
 
-  def parser(:cet_adaptor_signatures, msg) do
-  end
+  # def parser(:cet_adaptor_signatures, msg) do
+  # end
 
-  def parser(:contract_info, msg) do
-  end
+  # def parser(:contract_info, msg) do
+  # end
 
   def parse_outcomes(0, msg, outcomes), do: {Enum.reverse(outcomes), msg}
 

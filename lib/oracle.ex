@@ -171,5 +171,10 @@ defmodule ExFacto.Oracle.Attestation do
     {pk, msg} = Messaging.par(msg, 32)
     {:ok, pubkey} = Point.lift_x(pk)
     {sig_ct, msg} = Utils.get_counter(msg)
+    # TODO make these 2 functions generic
+    {sigs, msg} = Messaging.parse_signatures(msg, sig_ct, [])
+    {outcomes, msg} = Messaging.parse_outcomes(msg, sig_ct, [])
+    attestation = new(event_id, pubkey, sigs, outcomes)
+    {attestation, msg}
   end
 end

@@ -75,7 +75,7 @@ defmodule ExFacto.Contract.Offer do
           contract_info: Contract.t(),
           funding_pubkey: Point.t(),
           payout_script: Script.t(),
-          offer_collateral_amount: non_neg_integer(),
+          collateral_amount: non_neg_integer(),
           # funding_input type
           funding_inputs: list(),
           change_script: Script.t(),
@@ -93,7 +93,7 @@ defmodule ExFacto.Contract.Offer do
     :contract_info,
     :funding_pubkey,
     :payout_script,
-    :offer_collateral_amount,
+    :collateral_amount,
     :funding_inputs,
     :change_script,
     :feerate,
@@ -127,7 +127,7 @@ defmodule ExFacto.Contract.Offer do
       contract_info: contract_info,
       funding_pubkey: funding_pubkey,
       payout_script: payout_script,
-      offer_collateral_amount: offer_collateral_amount,
+      collateral_amount: offer_collateral_amount,
       funding_inputs: funding_inputs,
       change_script: change_script,
       feerate: feerate,
@@ -145,7 +145,7 @@ defmodule ExFacto.Contract.Offer do
       Contract.serialize(o.contract_info) <>
       Point.x_bytes(o.funding_pubkey) <>
       Utils.script_with_big_size(o.payout_script) <>
-      Messaging.ser(o.offer_collateral_amount, :u64) <>
+      Messaging.ser(o.collateral_amount, :u64) <>
       Messaging.serialize_funding_inputs(o.funding_inputs) <>
       Utils.script_with_big_size(o.change_script) <>
       Messaging.ser(o.feerate, :u64) <>

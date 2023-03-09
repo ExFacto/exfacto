@@ -37,12 +37,21 @@ defmodule ExFacto.Event do
       Messaging.ser(event.id, :utf8)
   end
 
+  def parse_nonce_point(msg) do
+    {nonce_pt, msg} = Messaging.par(msg, 32)
+    {:ok, nonce_point} = Point.lift_x(nonce_pt)
+    {nonce_point, msg}
+  end
+
   def parse(msg) do
     # TODO finish
     {nonce_ct, msg} = Utils.get_counter(msg)
-    <<nonces::binary-size(nonce_ct * 32), msg::binary>> = msg
+    {nonce_points, msg} = Messaging.parse_items(msg, nonce_ct, [], &parse_nonce_point/1)
     {maturity_epoch, msg} = Messaging.par(msg, :u32)
-    {}
+    {descriptor, msg} = parse_event_descriptor(msg)
+    {event_id, msg} = Messaging.par(msg, :utf8)
+    event = new(event_id, nonce_points, descriptor, maturity_epoch)
+    {event, msg}
   end
 
   @type event_descriptor :: %{
@@ -64,7 +73,11 @@ defmodule ExFacto.Event do
 
   def parse_event_descriptor(msg) do
     {outcome_ct, msg} = Messaging.par(msg, :u32)
-    Messaging.parse_outcomes(outcome_ct, msg, [])
+    Messaging.parse_items(msg, outcome_ct, [], &parse_outcome/1)
+  end
+
+  def parse_outcome(msg) do
+    Messaging.par(msg, :utf8)
   end
 
   # Assuming Enum.
@@ -74,16 +87,16 @@ defmodule ExFacto.Event do
         maturity_epoch
       ) do
     nonce_sec = Utils.new_private_key()
-    {:ok, nonce_point} = PrivateKey.to_point(nonce_sec)
+    nonce_point = PrivateKey.to_point(nonce_sec)
 
-    event = %__MODULE__{
-      id: Utils.new_event_id(),
-      nonce_points: [nonce_point],
-      descriptor: descriptor,
-      maturity_epoch: maturity_epoch
-    }
+        event = %__MODULE__{
+          id: Utils.new_event_id(),
+          nonce_points: [nonce_point],
+          descriptor: descriptor,
+          maturity_epoch: maturity_epoch
+        }
 
-    {nonce_sec, event}
+        {nonce_sec, event}
   end
 
   # OLD
