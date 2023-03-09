@@ -4,11 +4,11 @@ defmodule ExFacto.Gambler do
     A Gambler struct contains all the private info
     for a single party to a DLC
   """
-  alias ExFacto.{Chain, Utils, Contract}
+  alias ExFacto.{Oracle, Chain, Utils, Contract, Builder}
   alias ExFacto.Contract.{Offer, Accept}
   alias ExFacto.Oracle.Announcement
-  alias Bitcoinex.{Script,Transaction, Taproot}
-  alias Bitcoinex.Secp256k1.{PrivateKey, Point}
+  alias Bitcoinex.{Script, Transaction, Taproot}
+  alias Bitcoinex.Secp256k1.{PrivateKey, Point, Schnorr}
 
   @type t :: %__MODULE__{
           network: Bitcoinex.Network.t(),
@@ -99,7 +99,7 @@ defmodule ExFacto.Gambler do
       accept_collateral = total_collateral - offer.collateral_amount
 
       accept_refund_output = Builder.new_output(accept_collateral, g.payout_script)
-      offer_refund_output = Builder.new_output(offer.collateral, offer.payout_script)
+      offer_refund_output = Builder.new_output(offer.collateral_amount, offer.payout_script)
 
       inputs = g.funding_inputs ++ offer.funding_inputs
 
@@ -107,7 +107,7 @@ defmodule ExFacto.Gambler do
         Builder.calculate_funding_tx_outputs(
           offer.contract_info.total_collateral,
           accept_collateral,
-          offer.collateral,
+          offer.collateral_amount,
           g.funding_inputs,
           offer.funding_inputs,
           g.change_script,
@@ -141,7 +141,8 @@ defmodule ExFacto.Gambler do
 
       # Build refund tx
       {refund_tx, refund_signature} =
-        Builder.build_and_sign_refund_tx(
+        build_and_sign_refund_tx(
+          g,
           funding_outpoint,
           [offer_refund_output, accept_refund_output],
           offer.refund_locktime,
@@ -206,7 +207,7 @@ defmodule ExFacto.Gambler do
         funding_outpoint,
         refund_outputs,
         refund_locktime,
-        funding_output,
+        funding_output = %Transaction.Out{},
         fund_leaf
       ) do
     refund_tx =
@@ -216,11 +217,13 @@ defmodule ExFacto.Gambler do
         refund_locktime
       )
 
-    {:ok, refund_signature} = sign_settlement_tx(g, refund_tx, funding_output, fund_leaf)
+    {:ok, refund_signature} =
+      sign_settlement_tx(g, refund_tx, funding_output, fund_leaf)
     {refund_tx, refund_signature}
   end
 
-  def sign_settlement_tx(g = %__MODULE__{}, settlement_tx, funding_output, fund_leaf) do
+  def sign_settlement_tx(g = %__MODULE__{}, settlement_tx = %Transaction{},
+    funding_output, fund_leaf) do
     settlement_sighash =
       settlement_sighash(
         settlement_tx,
@@ -253,10 +256,10 @@ defmodule ExFacto.Gambler do
 
   def encrypted_sign_cet(
         g = %__MODULE__{},
-        oracle_pubkey,
-        nonce_point,
-        funding_output,
-        fund_leaf,
+        oracle_pubkey = %Point{},
+        nonce_point = %Point{},
+        funding_output = %Transaction.Out{},
+        fund_leaf = %Taproot.TapLeaf{},
         {outcome, cet_tx}
       ) do
     # funding transactions

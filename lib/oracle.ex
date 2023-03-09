@@ -66,7 +66,7 @@ defmodule ExFacto.Oracle do
   end
 
   # used for signing outcomes (strings)
-  def attestation_sighash(outcome), do: oracle_tagged_hash(outcome, "attestation/v0")
+  def attestation_sighash(outcome), do: oracle_tagged_hash(outcome, "attestation/v0") |> :binary.encode_unsigned()
 
   def oracle_tagged_hash(msg, tag) do
     BtcUtils.tagged_hash("DLC/oracle/#{tag}", msg) |> :binary.decode_unsigned()
@@ -74,7 +74,7 @@ defmodule ExFacto.Oracle do
 
   def sign_outcome(outcome, sk) do
     aux = Utils.new_rand_int()
-    sighash = attestation_sighash(outcome)
+    sighash = attestation_sighash(outcome) |> :binary.decode_unsigned()
     Schnorr.sign(sk, sighash, aux)
   end
 end
@@ -113,7 +113,7 @@ defmodule ExFacto.Oracle.Announcement do
   end
 
   def parse(<<sig::binary-size(64), pk::binary-size(32), event::binary>>) do
-    signature = Signature.parse_signature(sig)
+    {:ok, signature} = Signature.parse_signature(sig)
     {:ok, point} = Point.lift_x(pk)
     {event, rest} = Event.parse(event)
 
@@ -172,8 +172,8 @@ defmodule ExFacto.Oracle.Attestation do
     {:ok, pubkey} = Point.lift_x(pk)
     {sig_ct, msg} = Utils.get_counter(msg)
     # TODO make these 2 functions generic
-    {sigs, msg} = Messaging.parse_signatures(msg, sig_ct, [])
-    {outcomes, msg} = Messaging.parse_outcomes(msg, sig_ct, [])
+    {sigs, msg} = Messaging.parse_items(msg, sig_ct, [], &Messaging.parse_signature/1)
+    {outcomes, msg} = Messaging.parse_items(msg, sig_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
     attestation = new(event_id, pubkey, sigs, outcomes)
     {attestation, msg}
   end

@@ -79,7 +79,7 @@ defmodule ExFacto.Contract.Offer do
           # funding_input type
           funding_inputs: list(),
           change_script: Script.t(),
-          feerate: non_neg_integer(),
+          fee_rate: non_neg_integer(),
           cet_locktime: non_neg_integer(),
           refund_locktime: non_neg_integer(),
           tlvs: list()
@@ -96,7 +96,7 @@ defmodule ExFacto.Contract.Offer do
     :collateral_amount,
     :funding_inputs,
     :change_script,
-    :feerate,
+    :fee_rate,
     :cet_locktime,
     :refund_locktime,
     :tlvs
@@ -110,7 +110,7 @@ defmodule ExFacto.Contract.Offer do
         funding_pubkey,
         payout_script,
         change_script,
-        feerate,
+        fee_rate,
         cet_locktime,
         refund_locktime
       ) do
@@ -130,7 +130,7 @@ defmodule ExFacto.Contract.Offer do
       collateral_amount: offer_collateral_amount,
       funding_inputs: funding_inputs,
       change_script: change_script,
-      feerate: feerate,
+      fee_rate: fee_rate,
       cet_locktime: cet_locktime,
       refund_locktime: refund_locktime
       # TODO TLVs
@@ -148,7 +148,7 @@ defmodule ExFacto.Contract.Offer do
       Messaging.ser(o.collateral_amount, :u64) <>
       Messaging.serialize_funding_inputs(o.funding_inputs) <>
       Utils.script_with_big_size(o.change_script) <>
-      Messaging.ser(o.feerate, :u64) <>
+      Messaging.ser(o.fee_rate, :u64) <>
       Messaging.ser(o.cet_locktime, :u32) <>
       Messaging.ser(o.refund_locktime, :u32) <>
       serialize_offer_tlvs(o.tlvs)

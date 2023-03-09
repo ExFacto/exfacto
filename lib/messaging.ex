@@ -173,6 +173,11 @@ defmodule ExFacto.Messaging do
     parse_items(msg, ct-1, [item | items], parse_func)
   end
 
+  def parse_signature(<<sig::binary-size(64), msg::binary>>) do
+    {:ok, sig} = Signature.parse_signature(sig)
+    {sig, msg}
+  end
+
   def parse(msg) do
     {type, msg} = Utils.parse_compact_size_value(msg)
     type_atom = Map.fetch!(msg_types(), :binary.decode_unsigned(type))
@@ -212,7 +217,7 @@ defmodule ExFacto.Messaging do
       collateral_amount: offer_collateral_amount,
       funding_inputs: funding_inputs,
       change_script: change_script,
-      feerate: fee_rate,
+      fee_rate: fee_rate,
       cet_locktime: cet_locktime,
       refund_locktime: refund_locktime
     }
@@ -231,8 +236,7 @@ defmodule ExFacto.Messaging do
     {change_script_bin, msg} = Utils.parse_compact_size_value(msg)
     {:ok, change_script} = Script.parse_script(change_script_bin)
     {cet_adaptor_signatures, msg} = parser(:cet_adaptor_signatures, msg)
-    {refund_sig_bin, _msg} = par(msg, 64)
-    {:ok, refund_signature} = Signature.parse_signature(refund_sig_bin)
+    {refund_signature, _msg} = parse_signature(msg)
     # TODO: negotation_fields
     # TODO: tlvs
 

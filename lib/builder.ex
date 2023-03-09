@@ -54,7 +54,7 @@ defmodule ExFacto.Builder do
     }
 
     # nonce r is returned to allow others to verify that the keyspend path is unsolvable
-    {funding_output, r}
+    {funding_output, fund_leaf, r}
   end
 
   def build_refund_tx(fund_input, outputs, locktime) do
@@ -62,6 +62,7 @@ defmodule ExFacto.Builder do
       version: @tx_version,
       inputs: [fund_input],
       outputs: outputs,
+      witnesses: [],
       lock_time: locktime
     }
 
