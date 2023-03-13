@@ -1,0 +1,556 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Contract
+
+```elixir
+exfacto_root = Path.join(__DIR__, "..")
+
+Mix.install(
+  [
+    {:exfacto, path: exfacto_root, env: :dev}
+  ],
+  config_path: Path.join(exfacto_root, "config/config.exs"),
+  lockfile: Path.join(exfacto_root, "mix.lock")
+)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+==> exfacto
+Compiling 1 file (.ex)
+warning: Builder.build_funding_outpoint/2 is undefined (module Builder is not available or is yet to be defined)
+  lib/builder.ex:32: ExFacto.Builder.build_funding_tx/3
+
+warning: ExFacto.Oracle.attestation_sighash/1 is undefined or private
+  lib/gambler.ex:314: ExFacto.Gambler.encrypted_sign_cet/6
+
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Imports & Constants
+
+```elixir
+alias ExFacto.{Gambler, Oracle, Event, Contract, Messaging, Utils, Builder}
+alias ExFacto.Oracle.{Announcement, Attestation}
+alias ExFacto.Contract.{Offer, Accept}
+alias Bitcoinex.{Transaction, Script}
+alias Bitcoinex.Secp256k1.{PrivateKey, Point, Signature, Schnorr}
+
+network = :testnet
+p2tr_keyspend_witness_len = 64
+default_sequence = 0xFFFFFFFE
+
+new_p2tr_keyonly = fn ->
+  sk = Utils.new_private_key()
+  pk = PrivateKey.to_point(sk)
+
+  {:ok, p2tr_script} = Script.create_p2tr(pk)
+  {sk, p2tr_script}
+end
+
+fake_tx = fn out ->
+  %Transaction{
+    version: 2,
+    inputs: [
+      %Transaction.In{
+        prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
+        prev_vout: 0,
+        sequence_no: default_sequence
+      }
+    ],
+    outputs: [out],
+    lock_time: 0
+  }
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+#Function<42.3316493/1 in :erl_eval.expr/6>
+```
+
+## Set Up Oracle
+
+```elixir
+oracle = Oracle.new()
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%ExFacto.Oracle{
+  sk: %Bitcoinex.Secp256k1.PrivateKey{
+    d: 50979712920370032692495550496283532838071651016308345377735091164047675625038
+  },
+  pk: %Bitcoinex.Secp256k1.Point{
+    x: 19218400594751540045774484767086516340603401269042319760364653134779267209948,
+    y: 89345899942870000047878299078890344477138717904169795869894327314047161710412,
+    z: 0
+  }
+}
+```
+
+## Setup Event
+
+```elixir
+outcomes = ["CHIEFS WIN", "EAGLES WIN"]
+event_descriptor = %{outcomes: outcomes}
+
+{nonce_sk, event} =
+  Event.new_event_from_enum_event_descriptor(
+    event_descriptor,
+    1_678_498_879,
+    &ExFacto.Utils.new_private_key/0
+  )
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{%Bitcoinex.Secp256k1.PrivateKey{
+   d: 103863451637765303007513944145432930821316789830768678902110248505308228609358
+ },
+ %ExFacto.Event{
+   id: "3f2a1ef01ff9dc24e212a94c018e38100d7101281ce9447e2cd715c0e0f61a34",
+   nonce_points: [
+     %Bitcoinex.Secp256k1.Point{
+       x: 19779733666843603088749840891545697294542856289109025466061858842209840537386,
+       y: 31492073498159704772344543060385079231132107940282471080914858682372464243526,
+       z: 0
+     }
+   ],
+   descriptor: %{outcomes: ["CHIEFS WIN", "EAGLES WIN"]},
+   maturity_epoch: 1678498879
+ }}
+```
+
+Now, the oracle will sign the event for authentication purposes, The signed event is a complete Announcement, which can be broadcast to DLC users.
+
+```elixir
+announcement = Oracle.sign_event(oracle, event)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%ExFacto.Oracle.Announcement{
+  signature: %Bitcoinex.Secp256k1.Signature{
+    r: 93303504379280693540858385689372989348358332938641106680923722651069106343540,
+    s: 32472568180699540036579180919513429408547805011525280633880711830764253337503
+  },
+  public_key: %Bitcoinex.Secp256k1.Point{
+    x: 19218400594751540045774484767086516340603401269042319760364653134779267209948,
+    y: 89345899942870000047878299078890344477138717904169795869894327314047161710412,
+    z: 0
+  },
+  event: %ExFacto.Event{
+    id: "3f2a1ef01ff9dc24e212a94c018e38100d7101281ce9447e2cd715c0e0f61a34",
+    nonce_points: [
+      %Bitcoinex.Secp256k1.Point{
+        x: 19779733666843603088749840891545697294542856289109025466061858842209840537386,
+        y: 31492073498159704772344543060385079231132107940282471080914858682372464243526,
+        z: 0
+      }
+    ],
+    descriptor: %{outcomes: ["CHIEFS WIN", "EAGLES WIN"]},
+    maturity_epoch: 1678498879
+  }
+}
+```
+
+Anyone can verify the signature of this announcement like so
+
+```elixir
+Announcement.verify(announcement)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+true
+```
+
+## Introducing Alice
+
+Meet Alice. she has a coin (from a transaction that we made up). She wants to use this coin to bet on this Oracle Announcement.
+
+```elixir
+{alice_input_sk, alice_input_script} = new_p2tr_keyonly.()
+
+alice_input_tx =
+  fake_tx.(%Transaction.Out{
+    value: 100_000_000,
+    script_pub_key: Script.to_hex(alice_input_script)
+  })
+
+alice_funding_inputs = [
+  Messaging.new_funding_input_info(
+    alice_input_tx,
+    0,
+    default_sequence,
+    p2tr_keyspend_witness_len,
+    nil
+  )
+]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %{
+    max_witness_len: 64,
+    prev_tx: %Bitcoinex.Transaction{
+      version: 2,
+      inputs: [
+        %Bitcoinex.Transaction.In{
+          prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
+          prev_vout: 0,
+          script_sig: nil,
+          sequence_no: 4294967294
+        }
+      ],
+      outputs: [
+        %Bitcoinex.Transaction.Out{
+          value: 100000000,
+          script_pub_key: "5120f8bd0a546b7645002e65c9c0b2fd48ed851051d5d68de70b31f6a354465aa70d"
+        }
+      ],
+      witnesses: nil,
+      lock_time: 0
+    },
+    prev_vout: 0,
+    redeem_script: nil,
+    sequence: 4294967294
+  }
+]
+```
+
+## Alice Makes an Offer
+
+Alice will create an offer using this Event.
+
+```elixir
+# we don't care where the money goes after the contract in this example
+{_alice_change_sk, alice_change_script} = new_p2tr_keyonly.()
+{:ok, alice_change_addr} = Script.to_address(alice_change_script, network)
+{_alice_payout_sk, alice_payout_script} = new_p2tr_keyonly.()
+{:ok, alice_payout_addr} = Script.to_address(alice_payout_script, network)
+
+# Gambler is instantiated once per contract.
+alice =
+  Gambler.new(
+    alice_funding_inputs,
+    alice_change_addr,
+    alice_payout_addr,
+    &Utils.new_private_key/0
+  )
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%ExFacto.Gambler{
+  network: %Bitcoinex.Network{
+    name: :testnet,
+    hrp_segwit_prefix: "tb",
+    p2pkh_version_decimal_prefix: 111,
+    p2sh_version_decimal_prefix: 196
+  },
+  funding_inputs: [
+    %{
+      max_witness_len: 64,
+      prev_tx: %Bitcoinex.Transaction{
+        version: 2,
+        inputs: [
+          %Bitcoinex.Transaction.In{
+            prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
+            prev_vout: 0,
+            script_sig: nil,
+            sequence_no: 4294967294
+          }
+        ],
+        outputs: [
+          %Bitcoinex.Transaction.Out{
+            value: 100000000,
+            script_pub_key: "5120f8bd0a546b7645002e65c9c0b2fd48ed851051d5d68de70b31f6a354465aa70d"
+          }
+        ],
+        witnesses: nil,
+        lock_time: 0
+      },
+      prev_vout: 0,
+      redeem_script: nil,
+      sequence: 4294967294
+    }
+  ],
+  fund_sk: %Bitcoinex.Secp256k1.PrivateKey{
+    d: 93208144617302964064733892096539916448464565254875088566670777267824712090347
+  },
+  fund_pk: %Bitcoinex.Secp256k1.Point{
+    x: 20579193276862524649680766841475678419627072166969290935965914347865052197438,
+    y: 112489858350612282984219646905876642367169671696583247720573135291822473057720,
+    z: 0
+  },
+  change_script: %Bitcoinex.Script{
+    items: [
+      81,
+      32,
+      <<174, 14, 19, 120, 227, 163, 139, 192, 85, 21, 177, 117, 188, 61, 1, 156, 240, 158, 76, 56,
+        182, 74, 50, 67, 193, 204, 88, 240, 199, 124, 209, 75>>
+    ]
+  },
+  payout_script: %Bitcoinex.Script{
+    items: [
+      81,
+      32,
+      <<161, 164, 123, 114, 196, 221, 180, 160, 55, 237, 233, 108, 134, 0, 146, 172, 136, 229, 130,
+        238, 45, 251, 235, 74, 231, 229, 5, 71, 145, 152, 37, 74>>
+    ]
+  }
+}
+```
+
+Alice sets a few parameters for the bet. She sets the total bet value to 100M sats, decides she will put up 50M sats (making the odds 50/50), and that she will bet on the `EAGLES WIN` outcome. She also sets the fee rate to 2 sats/vByte.
+
+```elixir
+total_collateral = 100_000_000
+# alice will put up half (.5BBTC)
+offer_collateral = 50_000_000
+# alice decides she wants to bet on the seoncd outcome "EAGLES WIN"
+payouts = [0, 100_000_000]
+# refund will become available 1 week after the event maturity
+refund_locktime_delta = 1_204_000
+# sats/vByte
+fee_rate = 2
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+2
+```
+
+Then she creates the offer
+
+```elixir
+offer =
+  Gambler.create_offer(
+    alice,
+    announcement,
+    payouts,
+    offer_collateral,
+    total_collateral,
+    refund_locktime_delta,
+    fee_rate
+  )
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%ExFacto.Contract.Offer{
+  version: 0,
+  contract_flags: 0,
+  chain_hash: <<0, 0, 0, 0, 9, 51, 234, 1, 173, 14, 233, 132, 32, 151, 121, 186, 174, 195, 206, 217,
+    15, 163, 244, 8, 113, 149, 38, 248, 215, 127, 73, 67>>,
+  temp_contract_id: <<0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0>>,
+  contract_info: %ExFacto.Contract{
+    total_collateral: 100000000,
+    descriptor: [{"CHIEFS WIN", 0}, {"EAGLES WIN", 100000000}],
+    oracle_info: %ExFacto.Oracle.Announcement{
+      signature: %Bitcoinex.Secp256k1.Signature{
+        r: 93303504379280693540858385689372989348358332938641106680923722651069106343540,
+        s: 32472568180699540036579180919513429408547805011525280633880711830764253337503
+      },
+      public_key: %Bitcoinex.Secp256k1.Point{
+        x: 19218400594751540045774484767086516340603401269042319760364653134779267209948,
+        y: 89345899942870000047878299078890344477138717904169795869894327314047161710412,
+        z: 0
+      },
+      event: %ExFacto.Event{
+        id: "3f2a1ef01ff9dc24e212a94c018e38100d7101281ce9447e2cd715c0e0f61a34",
+        nonce_points: [
+          %Bitcoinex.Secp256k1.Point{
+            x: 19779733666843603088749840891545697294542856289109025466061858842209840537386,
+            y: 31492073498159704772344543060385079231132107940282471080914858682372464243526,
+            z: 0
+          }
+        ],
+        descriptor: %{outcomes: ["CHIEFS WIN", "EAGLES WIN"]},
+        maturity_epoch: 1678498879
+      }
+    }
+  },
+  funding_pubkey: %Bitcoinex.Secp256k1.Point{
+    x: 20579193276862524649680766841475678419627072166969290935965914347865052197438,
+    y: 112489858350612282984219646905876642367169671696583247720573135291822473057720,
+    z: 0
+  },
+  payout_script: %Bitcoinex.Script{
+    items: [
+      81,
+      32,
+      <<161, 164, 123, 114, 196, 221, 180, 160, 55, 237, 233, 108, 134, 0, 146, 172, 136, 229, 130,
+        238, 45, 251, 235, 74, 231, 229, 5, 71, 145, 152, 37, 74>>
+    ]
+  },
+  collateral_amount: 50000000,
+  funding_inputs: [
+    %{
+      max_witness_len: 64,
+      prev_tx: %Bitcoinex.Transaction{
+        version: 2,
+        inputs: [
+          %Bitcoinex.Transaction.In{
+            prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
+            prev_vout: 0,
+            script_sig: nil,
+            sequence_no: 4294967294
+          }
+        ],
+        outputs: [
+          %Bitcoinex.Transaction.Out{
+            value: 100000000,
+            script_pub_key: "5120f8bd0a546b7645002e65c9c0b2fd48ed851051d5d68de70b31f6a354465aa70d"
+          }
+        ],
+        witnesses: nil,
+        lock_time: 0
+      },
+      prev_vout: 0,
+      redeem_script: nil,
+      sequence: 4294967294
+    }
+  ],
+  change_script: %Bitcoinex.Script{
+    items: [
+      81,
+      32,
+      <<174, 14, 19, 120, 227, 163, 139, 192, 85, 21, 177, 117, 188, 61, 1, 156, 240, 158, 76, 56,
+        182, 74, 50, 67, 193, 204, 88, 240, 199, 124, 209, 75>>
+    ]
+  },
+  fee_rate: 2,
+  cet_locktime: 1678498879,
+  refund_locktime: 1679702879,
+  tlvs: nil
+}
+```
+
+This offer can be serialized to base64 and broadcast publically, or shared directly with a counterparty Alice wants to bet against. It is one-time use, since the offer specifies Alice's coins, which cannot be spent more than once.
+
+## Meet Bob
+
+This is Bob. Bob says hi. This is Bob when an offer comes by. Bob also has a coin (also fake), and wants to bet against Alice.
+
+```elixir
+{bob_input_sk, bob_input_script} = new_p2tr_keyonly.()
+
+bob_input_tx =
+  fake_tx.(%Transaction.Out{
+    value: 100_000_000,
+    script_pub_key: Script.to_hex(bob_input_script)
+  })
+
+bob_funding_inputs = [
+  Messaging.new_funding_input_info(
+    bob_input_tx,
+    0,
+    default_sequence,
+    p2tr_keyspend_witness_len,
+    nil
+  )
+]
+
+# we don't care where the money goes after the contract in this example
+{_bob_change_sk, bob_change_script} = new_p2tr_keyonly.()
+{:ok, bob_change_addr} = Script.to_address(bob_change_script, network)
+{_bob_payout_sk, bob_payout_script} = new_p2tr_keyonly.()
+{:ok, bob_payout_addr} = Script.to_address(bob_payout_script, network)
+
+# Gambler is instantiated once per contract.
+bob = Gambler.new(bob_funding_inputs, bob_change_addr, bob_payout_addr, &Utils.new_private_key/0)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%ExFacto.Gambler{
+  network: %Bitcoinex.Network{
+    name: :testnet,
+    hrp_segwit_prefix: "tb",
+    p2pkh_version_decimal_prefix: 111,
+    p2sh_version_decimal_prefix: 196
+  },
+  funding_inputs: [
+    %{
+      max_witness_len: 64,
+      prev_tx: %Bitcoinex.Transaction{
+        version: 2,
+        inputs: [
+          %Bitcoinex.Transaction.In{
+            prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
+            prev_vout: 0,
+            script_sig: nil,
+            sequence_no: 4294967294
+          }
+        ],
+        outputs: [
+          %Bitcoinex.Transaction.Out{
+            value: 100000000,
+            script_pub_key: "5120acd9a4e737e5215d7d9a762cd850ca7e5efd96c8adbaa242928006fbde4bda1c"
+          }
+        ],
+        witnesses: nil,
+        lock_time: 0
+      },
+      prev_vout: 0,
+      redeem_script: nil,
+      sequence: 4294967294
+    }
+  ],
+  fund_sk: %Bitcoinex.Secp256k1.PrivateKey{
+    d: 64331841331817098814915668456726067521528304707006795106136369107680936482883
+  },
+  fund_pk: %Bitcoinex.Secp256k1.Point{
+    x: 111417248211528913251798767388351049034007970244472971010035977875924154427798,
+    y: 32090172582068646463910238544253628498301441456367360896897880316159252106302,
+    z: 0
+  },
+  change_script: %Bitcoinex.Script{
+    items: [
+      81,
+      32,
+      <<190, 117, 135, 253, 138, 6, 232, 190, 167, 65, 8, 94, 254, 171, 30, 252, 149, 17, 16, 134,
+        205, 150, 221, 16, 198, 253, 140, 47, 70, 126, 233, 35>>
+    ]
+  },
+  payout_script: %Bitcoinex.Script{
+    items: [
+      81,
+      32,
+      <<191, 166, 13, 77, 113, 131, 78, 169, 31, 175, 200, 150, 124, 184, 163, 128, 221, 176, 247,
+        218, 73, 118, 238, 113, 9, 197, 5, 130, 97, 27, 147, 213>>
+    ]
+  }
+}
+```
+
+## Bob Accepts Alice's Offer
+
+Alice can send bob an encoding of her offer, or a coordinator can help Bob find Alice's offer. In either case, Bob will now create an Accept to Alice's Offer.
+
+From the Offer, Bob has all the info he needs to construct the full Funding Tx, CETs for each outcome, and a refund tx.
+
+```elixir
+{accept, funding_tx, outcomes_cet_txs, refund_tx} = Gambler.create_accept(bob, offer)
+```

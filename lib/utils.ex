@@ -1,6 +1,6 @@
 defmodule ExFacto.Utils do
   # alias Bitcoinex.Utils
-  alias Bitcoinex.{Script, Secp256k1.PrivateKey, Secp256k1}
+  alias Bitcoinex.{Script, Secp256k1.PrivateKey, Secp256k1, Utils}
 
   @type outpoint :: {String.t(), non_neg_integer()}
 
@@ -78,6 +78,7 @@ defmodule ExFacto.Utils do
     |> Kernel.<>(data)
   end
 
+  def script_with_big_size(nil), do: <<0x00>>
   def script_with_big_size(script = %Script{}) do
     script
     |> Script.serialize_script()
@@ -89,5 +90,9 @@ defmodule ExFacto.Utils do
     Enum.reduce(items, {0, <<>>}, fn item, {ct, acc} ->
       {ct + 1, acc <> serialize_func.(item)}
     end)
+  end
+
+  def oracle_tagged_hash(msg, tag) do
+    Utils.tagged_hash("DLC/oracle/#{tag}", msg) |> :binary.decode_unsigned()
   end
 end

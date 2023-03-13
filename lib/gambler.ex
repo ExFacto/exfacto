@@ -17,15 +17,6 @@ defmodule ExFacto.Gambler do
           fund_pk: Point.t(),
           change_script: Script.t(),
           payout_script: Script.t()
-
-          # Other info Gambler should keep
-          # my_outcome
-          # their_outcome
-          # my outcome sigpoint
-          # their outcome sigpoint
-          # fund_amount
-          # fund_scriptpubkey
-          # fund_leaf # can be built from spk
         }
 
   defstruct [
@@ -37,14 +28,14 @@ defmodule ExFacto.Gambler do
     :payout_script
   ]
 
-  def new(funding_inputs, change_address, payout_address) do
-    sk = Utils.new_private_key()
+  def new(funding_inputs, change_address, payout_address, get_private_key_func) do
+    sk = get_private_key_func.()
     pk = PrivateKey.to_point(sk)
 
     {:ok, change_script, change_network} = Script.from_address(change_address)
-    {:ok, payout_script, dest_network} = Script.from_address(payout_address)
+    {:ok, payout_script, payout_network} = Script.from_address(payout_address)
 
-    if change_network != dest_network do
+    if change_network != payout_network do
       {:error, "mismatch networks"}
     else
       %__MODULE__{
@@ -84,41 +75,29 @@ defmodule ExFacto.Gambler do
       g.payout_script,
       g.change_script,
       fee_rate,
-      announcement.maturity_epoch,
-      announcement.maturity_epoch + refund_locktime_delta
+      announcement.event.maturity_epoch,
+      announcement.event.maturity_epoch + refund_locktime_delta
     )
   end
 
+  @spec create_accept(Gambler.t(), Offer.t()) :: {t(), Transaction.t(), list({String.t(), Transaction.t()}), Transaction.t()} | {:error, <<_::136>>}
   def create_accept(g = %__MODULE__{}, offer = %Offer{}) do
     if Chain.chain_hash(g.network.name) != offer.chain_hash do
       {:error, "mismatch networks"}
     else
-      funding_pubkeys = [g.fund_pk, offer.funding_pubkey]
+      # pubkeys will be sorted so order doesnt matter here
+      funding_pubkeys = [offer.funding_pubkey, g.fund_pk]
 
       total_collateral = offer.contract_info.total_collateral
       accept_collateral = total_collateral - offer.collateral_amount
 
-      accept_refund_output = Builder.new_output(accept_collateral, g.payout_script)
-      offer_refund_output = Builder.new_output(offer.collateral_amount, offer.payout_script)
-
       inputs = g.funding_inputs ++ offer.funding_inputs
 
       {funding_amount, accept_change_amount, offer_change_amount} =
-        Builder.calculate_funding_tx_outputs(
-          offer.contract_info.total_collateral,
-          accept_collateral,
-          offer.collateral_amount,
-          g.funding_inputs,
-          offer.funding_inputs,
-          g.change_script,
-          offer.change_script,
-          g.payout_script,
-          offer.payout_script,
-          offer.fee_rate
-        )
+        Builder.calculate_funding_tx_outputs(offer, g.funding_inputs, g.payout_script, g.change_script)
 
       {funding_output, fund_leaf, dummy_tapkey_tweak} =
-        Builder.build_funding_output(funding_amount, funding_pubkeys)
+        Builder.build_funding_output(funding_amount, funding_pubkeys, Utils.new_rand_int())
 
       # if either change amount is dust, will not be included
       change_outputs = Builder.filter_dust_outputs([
@@ -127,55 +106,26 @@ defmodule ExFacto.Gambler do
       ])
 
       # inputs & outputs will be sorted by bip69
-      {funding_tx, funding_vout} =
+      {funding_tx, funding_outpoint} =
         Builder.build_funding_tx(
           inputs,
           funding_output,
           change_outputs
         )
 
-      funding_txid = Transaction.transaction_id(funding_tx)
-
-      # fund_outpoint used as single input to CETs & Refund tx
-      funding_outpoint = Builder.build_funding_outpoint(funding_txid, funding_vout)
-
       # Build refund tx
       {refund_tx, refund_signature} =
         build_and_sign_refund_tx(
           g,
+          offer,
+          g.payout_script,
           funding_outpoint,
-          [offer_refund_output, accept_refund_output],
-          offer.refund_locktime,
           funding_output,
           fund_leaf
         )
 
       # build CETs list({outcome, cet_tx})
-      outcomes_cet_txs =
-        Builder.build_all_cets(
-          funding_outpoint,
-          offer.contract_info.total_collateral,
-
-          offer.payout_script,
-          g.payout_script,
-          offer.contract_info.descriptor,
-          offer.cet_locktime
-        )
-
-      # sign all CETs
-      outcomes_cet_adaptor_signatures =
-        encrypted_sign_all_cets(
-          g,
-          offer.contract_info.oracle_info,
-          funding_output,
-          fund_leaf,
-          outcomes_cet_txs
-        )
-
-      cet_adaptor_signatures =
-        Enum.map(outcomes_cet_adaptor_signatures, fn {_, adaptor_sig, was_negated} ->
-          {adaptor_sig, was_negated}
-        end)
+      {outcomes_cet_txs, cet_adaptor_signatures} = build_and_sign_cets(g, offer, funding_outpoint, funding_output, fund_leaf)
 
       accept =
         Accept.new(
@@ -195,6 +145,67 @@ defmodule ExFacto.Gambler do
     end
   end
 
+  # TODO dedup this code with the above
+  # when an offerer receives an accept, they also need to build all the txs and *sign* them
+  def offerer_ack_accept(g= %__MODULE__{}, offer = %Offer{}, accept = %Accept{}) do
+    # pubkeys will be sorted so order doesnt matter here
+    funding_pubkeys = [offer.funding_pubkey, accept.funding_pubkey]
+
+    {funding_amount, accept_change_amount, offer_change_amount} =
+      Builder.calculate_funding_tx_outputs(offer, accept.funding_inputs, accept.payout_script, accept.change_script)
+
+    # recreate fund_scriptpubkey and check that internal key is unsolvable
+    {funding_output, fund_leaf, _} =
+      Builder.build_funding_output(funding_amount, funding_pubkeys, accept.dummy_tapkey_tweak)
+
+    # if either change amount is dust, will not be included
+    change_outputs = Builder.filter_dust_outputs([
+      Builder.new_output(accept_change_amount, g.change_script),
+      Builder.new_output(offer_change_amount, offer.change_script)
+    ])
+
+    inputs = accept.funding_inputs ++ offer.funding_inputs
+
+    # inputs & outputs will be sorted by bip69
+    {funding_tx, funding_outpoint} =
+      Builder.build_funding_tx(
+        inputs,
+        funding_output,
+        change_outputs
+      )
+
+    # Build refund tx
+    {refund_tx, refund_signature} =
+      build_and_sign_refund_tx(
+        g,
+        offer,
+        accept.payout_script,
+        funding_outpoint,
+        funding_output,
+        fund_leaf
+      )
+
+    # build CETs list({outcome, cet_tx})
+    {outcomes_cet_txs, cet_adaptor_signatures} = build_and_sign_cets(g, offer, funding_outpoint, funding_output, fund_leaf)
+
+    # sign funding tx
+    # TODO how is this done?
+    signed_funding_tx = sign_funding_tx(funding_tx)
+
+    # the signatures need to go back to the accepter who can then sign the funding tx and broadcast
+    # the txs just need to be saved by the client, not shared
+    {signed_funding_tx, outcomes_cet_txs, cet_adaptor_signatures, refund_tx, refund_signature}
+  end
+
+  def accepter_sign_funding_tx(_g, funding_tx, offer_funding_signature, accept_funding_pubkey, offer_funding_pubkey) do
+    # TODO
+    fully_signed_funding_tx = sign_funding_tx(funding_tx)
+
+    # broadcast funding_tx
+    # BTCRPC.sendrawtransaction()
+  end
+
+
   # SIGNER
 
   # sighash_default (all)
@@ -204,22 +215,58 @@ defmodule ExFacto.Gambler do
 
   def build_and_sign_refund_tx(
         g = %__MODULE__{},
+        offer = %Offer{},
+        accept_payout_script,
         funding_outpoint,
-        refund_outputs,
-        refund_locktime,
         funding_output = %Transaction.Out{},
         fund_leaf
       ) do
+
+    accept_collateral = offer.contract_info.total_collateral - offer.collateral_amount
+    accept_refund_output = Builder.new_output(accept_collateral, accept_payout_script)
+    offer_refund_output = Builder.new_output(offer.collateral_amount, offer.payout_script)
+
     refund_tx =
       Builder.build_refund_tx(
         funding_outpoint,
-        refund_outputs,
-        refund_locktime
+        [accept_refund_output, offer_refund_output],
+        offer.refund_locktime
       )
 
     {:ok, refund_signature} =
       sign_settlement_tx(g, refund_tx, funding_output, fund_leaf)
     {refund_tx, refund_signature}
+  end
+
+  def build_and_sign_cets(g, offer, funding_outpoint, funding_output, fund_leaf) do
+    outcomes_cet_txs =
+      Builder.build_all_cets(
+        funding_outpoint,
+        offer.contract_info.total_collateral,
+
+        offer.payout_script,
+        g.payout_script,
+        offer.contract_info.descriptor,
+        offer.cet_locktime
+      )
+
+    # sign all CETs
+    outcomes_cet_adaptor_signatures =
+      encrypted_sign_all_cets(
+        g,
+        offer.contract_info.oracle_info,
+        funding_output,
+        fund_leaf,
+        outcomes_cet_txs
+      )
+
+      cet_adaptor_signatures =
+        Enum.map(outcomes_cet_adaptor_signatures, fn {_, adaptor_sig, was_negated} ->
+          {adaptor_sig, was_negated}
+        end)
+
+
+    {outcomes_cet_txs, cet_adaptor_signatures}
   end
 
   def sign_settlement_tx(g = %__MODULE__{}, settlement_tx = %Transaction{},
@@ -294,6 +341,13 @@ defmodule ExFacto.Gambler do
     fund_script_hex = Script.to_hex(fund_leaf.script)
 
     {fund_script_hex, control_block_hex}
+  end
+
+  # sign funding tx
+
+  # TODO IMPLEMENT ME!
+  def sign_funding_tx(_funding_tx) do
+    %Bitcoinex.Secp256k1.Signature{r: 1, s: 1}
   end
 
   # OLD

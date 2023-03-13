@@ -1,0 +1,70 @@
+[{
+        "inputs" : {
+          "offerInputs" : [ {
+            "redeemScriptLen" : 0,
+            "maxWitnessLen" : 108
+          } ],
+          "offerPayoutSPKLen" : 22,
+          "offerChangeSPKLen" : 22,
+          "acceptInputs" : [ {
+            "redeemScriptLen" : 0,
+            "maxWitnessLen" : 108
+          } ],
+          "acceptPayoutSPKLen" : 71,
+          "acceptChangeSPKLen" : 22,
+          "feeRate" : 10
+        },
+        "offerFundingFee" : 1260,
+        "offerClosingFee" : 850,
+        "acceptFundingFee" : 1260,
+        "acceptClosingFee" : 1340
+      },
+      {
+        "inputs" : {
+          "offerInputs" : [ {
+            "redeemScriptLen" : 22,
+            "maxWitnessLen" : 108
+          }, {
+            "redeemScriptLen" : 34,
+            "maxWitnessLen" : 218
+          } ],
+          "offerPayoutSPKLen" : 22,
+          "offerChangeSPKLen" : 34,
+          "acceptInputs" : [ {
+            "redeemScriptLen" : 0,
+            "maxWitnessLen" : 108
+          } ],
+          "acceptPayoutSPKLen" : 22,
+          "acceptChangeSPKLen" : 34,
+          "feeRate" : 10
+        },
+        "offerFundingFee" : 2920,
+        "offerClosingFee" : 850,
+        "acceptFundingFee" : 1380,
+        "acceptClosingFee" : 850
+      },
+      {
+        "inputs" : {
+          "offerInputs" : [ {
+            "redeemScriptLen" : 22,
+            "maxWitnessLen" : 108
+          }, {
+            "redeemScriptLen" : 34,
+            "maxWitnessLen" : 218
+          } ],
+          "offerPayoutSPKLen" : 22,
+          "offerChangeSPKLen" : 22,
+          "acceptInputs" : [ {
+            "redeemScriptLen" : 0,
+            "maxWitnessLen" : 108
+          } ],
+          "acceptPayoutSPKLen" : 22,
+          "acceptChangeSPKLen" : 34,
+          "feeRate" : 10
+        },
+        "offerFundingFee" : 2800,
+        "offerClosingFee" : 850,
+        "acceptFundingFee" : 1380,
+        "acceptClosingFee" : 850
+      }
+]

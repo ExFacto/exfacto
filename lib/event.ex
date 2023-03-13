@@ -6,6 +6,7 @@ defmodule ExFacto.Event do
           id: String.t(),
           # for now, only once nonce point per event
           nonce_points: list(Point.t()),
+          # this wrapping is so we can add new event_descriptor types (like numeric events)
           descriptor: event_descriptor(),
           maturity_epoch: non_neg_integer()
         }
@@ -28,7 +29,7 @@ defmodule ExFacto.Event do
   end
 
   def serialize(event) do
-    {ct, ser_nonces} = Utils.serialize_with_count(event.nonces, &Point.x_bytes/1)
+    {ct, ser_nonces} = Utils.serialize_with_count(event.nonce_points, &Point.x_bytes/1)
 
     Messaging.ser(ct, :u16) <>
       ser_nonces <>
@@ -44,7 +45,6 @@ defmodule ExFacto.Event do
   end
 
   def parse(msg) do
-    # TODO finish
     {nonce_ct, msg} = Utils.get_counter(msg)
     {nonce_points, msg} = Messaging.parse_items(msg, nonce_ct, [], &parse_nonce_point/1)
     {maturity_epoch, msg} = Messaging.par(msg, :u32)
@@ -54,6 +54,7 @@ defmodule ExFacto.Event do
     {event, msg}
   end
 
+  # this will be a more generic type once numeric descriptors
   @type event_descriptor :: %{
           outcomes: list(String.t())
         }
@@ -73,20 +74,17 @@ defmodule ExFacto.Event do
 
   def parse_event_descriptor(msg) do
     {outcome_ct, msg} = Messaging.par(msg, :u32)
-    Messaging.parse_items(msg, outcome_ct, [], &parse_outcome/1)
-  end
-
-  def parse_outcome(msg) do
-    Messaging.par(msg, :utf8)
+    Messaging.parse_items(msg, outcome_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
   end
 
   # Assuming Enum.
   # returns private nonce key and event
   def new_event_from_enum_event_descriptor(
         descriptor = %{outcomes: _},
-        maturity_epoch
+        maturity_epoch,
+        new_private_key_func
       ) do
-    nonce_sec = Utils.new_private_key()
+    nonce_sec = new_private_key_func.()
     nonce_point = PrivateKey.to_point(nonce_sec)
 
         event = %__MODULE__{

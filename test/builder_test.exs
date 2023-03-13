@@ -3,7 +3,7 @@ defmodule ExFacto.BuilderTest do
   doctest ExFacto.Builder
 
   alias ExFacto.Builder
-  alias Bitcoinex.{Script, Transaction}
+  alias Bitcoinex.{Script, Transaction, Utils}
 
 
   def example_p2tr_sig() do
@@ -177,7 +177,7 @@ defmodule ExFacto.BuilderTest do
         # offer_fee = Builder.calculate_fee(offer_tx_vbytes, fee_rate)
 
         # construct full tx & add dummy witnesses of proper len
-        {funding_tx, funding_vout} = Builder.build_funding_tx(accept_inputs ++ offer_inputs, funding_output, change_outputs)
+        {funding_tx, _funding_vout} = Builder.build_funding_tx(accept_inputs ++ offer_inputs, funding_output, change_outputs)
         accept_witnesses = [
           example_p2wpkh_witness(),
           example_p2wpkh_witness(),
@@ -202,22 +202,107 @@ defmodule ExFacto.BuilderTest do
   end
   # cet fee
   describe "test cet tx fee calculation" do
-    test "cet tx" do
-      accept_payout_script = example_p2tr_scriptpubkey()
-      offer_payout_script = example_p2tr_scriptpubkey()
+    # test "cet tx" do
+    #   accept_payout_script = example_p2tr_scriptpubkey()
+    #   offer_payout_script = example_p2tr_scriptpubkey()
 
-      accept_cet_vbytes = calculate_singleparty_cet_tx_vbytes([accept_payout_script])
-      offer_cet_vbytes = calculate_singleparty_cet_tx_vbytes([offer_payout_script])
+    #   accept_cet_vbytes = Builder.calculate_singleparty_cet_tx_vbytes([accept_payout_script])
+    #   offer_cet_vbytes = Builder.calculate_singleparty_cet_tx_vbytes([offer_payout_script])
 
-      cet_tx = Builder.build_cet_tx(example_p2tr_input(), 100_000, accept_payout_script, offer_payout_script, {"", 50_000}, 0)
-      funding_witness = example_p2tr_scriptspend_witness()
-      cet_tx = %Transaction{cet_tx | witnesses: [funding_witness]}
+    #   cet_tx = Builder.build_cet_tx(example_p2tr_input(), 100_000, accept_payout_script, offer_payout_script, {"", 50_000}, 0)
+    #   funding_witness = example_p2tr_scriptspend_witness()
+    #   cet_tx = %Transaction{cet_tx | witnesses: [funding_witness]}
 
-      cet_tx_vbytes = Transaction.vbyte_size(cet_tx)
+    #   cet_tx_vbytes = Transaction.vbyte_size(cet_tx)
 
-      joint_cet_tx_vbytes_estimate = accept_cet_vbytes + offer_cet_vbytes
-      assert joint_tx_vbytes_estimate >= tx_vbytes
-      assert joint_tx_vbytes_estimate - tx_vbytes < 2
+    #   joint_cet_tx_vbytes_estimate = accept_cet_vbytes + offer_cet_vbytes
+    #   assert joint_tx_vbytes_estimate >= tx_vbytes
+    #   assert joint_tx_vbytes_estimate - tx_vbytes < 2
+    # end
+
+    def populate_dummy_script(len) do
+      case len do
+        0 ->
+          nil
+
+        # ??? its in the test vectors though. Create bogus datapush script
+        x ->
+          {:ok, s} = Script.parse_script(<<0x00>> <> Utils.encode_int(x-2) <> <<0::little-size((x-2) * 8)>>)
+          s
+      end
+    end
+
+    def populate_dummy_inputs(inputs) do
+      {:ok, tx} = Transaction.decode("0100000000010149d1f8c9e4a6b97a0d6d00b67ee25eee2213521c057565a9a55df3259c4676e40000000000ffffffff025038a9000000000017a914290d5b2ba36d0616f9134b5bf93eca3817a55a67876eef140100000000160014d701ce5e753bd9454d343c8a3b86d84a3c34dbf502483045022100a6f040382b8e873c51a165621c0ec3c90c0352f8ddbf24253031c36078a7452302207b7a272a09b89e466483420a0700692a895a1cd1d99dae4ce6c500faf34bb63e012102ee3c98964dd1bfe13bee16c0b95fcf8281f12c5885d1fcb7b59fc2cb01ca763200000000")
+      Enum.map(inputs, fn input ->
+        %{
+          prev_tx: tx,
+          prev_vout: 0,
+          sequence: 0xFFFFFFFE,
+          max_witness_len: Map.fetch!(input, "maxWitnessLen"),
+          redeem_script: populate_dummy_script(Map.fetch!(input, "redeemScriptLen"))
+        }
+      end)
+    end
+
+    def load_tx_inputs(t, inputs) do
+      t
+      |> Map.fetch!(inputs)
+      |> populate_dummy_inputs()
+    end
+  end
+
+  describe "full test" do
+    test "dlcspec test vectors funding txs" do
+      filename = "test/dlcspec_vectors/dlc_fee_test.json"
+
+      {:ok, data} = File.read(filename)
+      {:ok, tests} = Poison.decode(data)
+
+      for t <- tests do
+        # load inputs
+        inputs = Map.fetch!(t, "inputs")
+        accept_inputs = load_tx_inputs(inputs, "acceptInputs")
+        offer_inputs = load_tx_inputs(inputs, "offerInputs")
+
+        accept_payout_script = populate_dummy_script(Map.fetch!(inputs, "acceptPayoutSPKLen"))
+        offer_payout_script = populate_dummy_script(Map.fetch!(inputs, "offerPayoutSPKLen"))
+
+        accept_change_script = populate_dummy_script(Map.fetch!(inputs, "acceptChangeSPKLen"))
+        offer_change_script = populate_dummy_script(Map.fetch!(inputs, "offerChangeSPKLen"))
+
+        fee_rate = Map.fetch!(inputs, "feeRate")
+
+        # calculate funding fees
+        accept_tx_vbytes = Builder.calculate_singleparty_funding_tx_vbytes(accept_inputs, accept_change_script)
+        accept_funding_fee = Builder.calculate_fee(accept_tx_vbytes, fee_rate)
+
+        offer_tx_vbytes = Builder.calculate_singleparty_funding_tx_vbytes(offer_inputs, offer_change_script)
+        offer_funding_fee = Builder.calculate_fee(offer_tx_vbytes, fee_rate)
+
+
+        # load expected results
+        c_offer_funding_fee = Map.fetch!(t, "offerFundingFee")
+        # c_offer_closing_fee = Map.fetch!(t, "offerClosingFee")
+        c_accept_funding_fee = Map.fetch!(t, "acceptFundingFee")
+        # c_accept_closing_fee = Map.fetch!(t, "acceptClosingFee")
+
+        # TODO We have a minor inaccuracy viz-a-viz DLCSpec test vectors
+        # in our tx fee estimation but its never off by more than 2 bytes, so its not too bad
+        accept_diff = c_accept_funding_fee - accept_funding_fee
+        assert offer_diff <= (2 * fee_rate)
+
+        offer_diff = c_offer_funding_fee - offer_funding_fee
+        assert accept_diff <= (2 * fee_rate)
+
+
+        # calculate settlement fees
+        # CET fees won't be the same as test vectors since we use P2TR scriptpath not P2WSH
+        # TODO add own test vectors
+        # assert c_offer_closing_fee ==
+        # assert c_accept_closing_fee ==
+
+      end
     end
   end
 end

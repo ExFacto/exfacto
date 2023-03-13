@@ -58,6 +58,17 @@ defmodule ExFacto.Messaging do
           redeem_script: Script.t()
         }
 
+  @spec new_funding_input_info(Transaction.t(), non_neg_integer(), non_neg_integer(), non_neg_integer(), Script.t() | nil) :: funding_input_info()
+  def new_funding_input_info(prev_tx, prev_vout, sequence, max_witness_len, redeem_script) do
+    %{
+      prev_tx: prev_tx,
+      prev_vout: prev_vout,
+      sequence: sequence,
+      max_witness_len: max_witness_len,
+      redeem_script: redeem_script
+    }
+  end
+
   def serialize_funding_inputs(inputs) do
     {ct, ser_inputs} = Utils.serialize_with_count(inputs, &ser_funding_input/1)
     Utils.big_size(ct) <> ser_inputs
@@ -269,12 +280,13 @@ defmodule ExFacto.Messaging do
   # def parser(:contract_info, msg) do
   # end
 
-  def parse_outcomes(0, msg, outcomes), do: {Enum.reverse(outcomes), msg}
+  # unused
+  # def parse_outcomes(0, msg, outcomes), do: {Enum.reverse(outcomes), msg}
 
-  def parse_outcomes(ct, msg, outcomes) do
-    {outcome, msg} = par(msg, :utf8)
-    parse_outcomes(ct - 1, msg, [outcome | outcomes])
-  end
+  # def parse_outcomes(ct, msg, outcomes) do
+  #   {outcome, msg} = par(msg, :utf8)
+  #   parse_outcomes(ct - 1, msg, [outcome | outcomes])
+  # end
 
   def parse_funding_inputs(0, msg, inputs), do: {Enum.reverse(inputs), msg}
 

@@ -71,7 +71,6 @@ defmodule ExFacto.Contract.Offer do
           contract_flags: non_neg_integer(),
           chain_hash: <<_::256>>,
           temp_contract_id: <<_::256>>,
-          # TODO type?
           contract_info: Contract.t(),
           funding_pubkey: Point.t(),
           payout_script: Script.t(),
@@ -153,6 +152,8 @@ defmodule ExFacto.Contract.Offer do
       Messaging.ser(o.refund_locktime, :u32) <>
       serialize_offer_tlvs(o.tlvs)
   end
+
+  def base64(o = %__MODULE__{}), do: serialize(o) |> Base.encode64()
 
   # unimplemented
   def serialize_offer_tlvs(nil), do: <<>>
@@ -248,6 +249,8 @@ defmodule ExFacto.Contract.Accept do
       serialize_negotiation_fields(a.negotiation_fields) <>
       serialize_tlvs(a.tlvs)
   end
+
+  def base64(a = %__MODULE__{}), do: serialize(a) |> Base.encode64()
 
   @type cet_adaptor_signature :: %{
           # BREAK WITH DLC Spec
