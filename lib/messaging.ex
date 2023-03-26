@@ -1,6 +1,7 @@
 defmodule ExFacto.Messaging do
   alias ExFacto.{Utils, Contract}
   alias Bitcoinex.{Script, Transaction}
+  alias Bitcoinex.Transaction.{Witness}
   alias Bitcoinex.Secp256k1.{Point, Signature}
 
   def ser(false, :bool), do: <<0x00>>
@@ -9,12 +10,15 @@ defmodule ExFacto.Messaging do
   def ser(i, :u16), do: <<i::big-size(16)>>
   def ser(i, :u32), do: <<i::big-size(32)>>
   def ser(i, :u64), do: <<i::big-size(64)>>
+  def ser(i, :u256), do: <<i::big-size(256)>>
   def ser(utf8_str, :utf8), do: utf8_str |> String.normalize(:nfc) |> Utils.with_big_size()
   def ser(nil, :script), do: <<0x00>>
-
+  def ser("", :script), do: <<0x00>>
   def ser(script, :script) do
     Utils.script_with_big_size(script)
   end
+  def ser(pk, :pk), do: Point.x_bytes(pk)
+  def ser(sig, :signature), do: Signature.serialize_signature(sig)
 
   @type sha256 :: <<_::256>>
 
@@ -55,45 +59,48 @@ defmodule ExFacto.Messaging do
           prev_vout: non_neg_integer(),
           sequence: non_neg_integer(),
           max_witness_len: non_neg_integer(),
-          redeem_script: Script.t()
+          redeem_script: Script.t(),
+          amount: non_neg_integer()
         }
 
-  @spec new_funding_input_info(Transaction.t(), non_neg_integer(), non_neg_integer(), non_neg_integer(), Script.t() | nil) :: funding_input_info()
-  def new_funding_input_info(prev_tx, prev_vout, sequence, max_witness_len, redeem_script) do
+  @spec new_funding_input_info(Transaction.t(), non_neg_integer(), non_neg_integer(), non_neg_integer(), Script.t() | nil, non_neg_integer()) :: funding_input_info()
+  def new_funding_input_info(prev_tx, prev_vout, sequence, max_witness_len, redeem_script, amount) do
     %{
       prev_tx: prev_tx,
       prev_vout: prev_vout,
       sequence: sequence,
       max_witness_len: max_witness_len,
-      redeem_script: redeem_script
+      redeem_script: redeem_script,
+      amount: amount
     }
   end
 
+  @spec serialize_funding_inputs(list(funding_input_info())) :: binary
   def serialize_funding_inputs(inputs) do
-    {ct, ser_inputs} = Utils.serialize_with_count(inputs, &ser_funding_input/1)
+    {ct, ser_inputs} = Utils.serialize_with_count(inputs, &serialize_funding_input/1)
     Utils.big_size(ct) <> ser_inputs
   end
 
-  def ser_funding_input(input) do
+  def serialize_funding_input(input) do
     prev_tx_bytes = Transaction.Utils.serialize(input.prev_tx)
 
     Utils.with_big_size(prev_tx_bytes) <>
       ser(input.prev_vout, :u32) <>
       ser(input.sequence, :u32) <>
       ser(input.max_witness_len, :u16) <>
-      ser(input.redeem_script, :script)
+      ser(input.redeem_script, :script) <>
+      ser(input.amount, :u64)
   end
 
-  def serialize_outcome(outcome), do: ser(outcome, :utf8)
-
-  def serialize_funding_signatures(_funding_signatures) do
-    # TODO
+  def serialize_funding_witnesses(witnesses) do
+    Utils.big_size(length(witnesses)) <> Witness.serialize_witness(witnesses)
   end
 
   @type enum_event_descriptor :: list(String.t())
 
+  @spec ser_enum_event_descriptor(list) :: binary
   def ser_enum_event_descriptor(outcomes) do
-    {ct, ser_outcomes} = Utils.serialize_with_count(outcomes, &serialize_outcome/1)
+    {ct, ser_outcomes} = Utils.serialize_with_count(outcomes, fn o -> ser(o, :utf8) end)
     ser(ct, :u16) <> ser_outcomes
   end
 
@@ -164,18 +171,32 @@ defmodule ExFacto.Messaging do
   def par(<<data::big-size(16), rest::binary>>, :u16), do: {data, rest}
   def par(<<data::big-size(32), rest::binary>>, :u32), do: {data, rest}
   def par(<<data::big-size(64), rest::binary>>, :u64), do: {data, rest}
+  def par(<<data::big-size(256), rest::binary>>, :u256), do: {data, rest}
   def par(bin, :utf8), do: Utils.parse_compact_size_value(bin)
   def par(<<0x00, rest::binary>>, :script), do: {nil, rest}
+  def par(msg, :script), do: parse_script(msg)
+  def par(msg, :pk), do: parse_point(msg)
+  def par(msg, :signature), do: parse_signature(msg)
 
-  def par(msg, :script) do
+  def par(bin, len) when is_integer(len) do
+    <<bin::binary-size(len), rest::binary>> = bin
+    {bin, rest}
+  end
+
+  def parse_script(msg) do
     {script_bin, msg} = Utils.parse_compact_size_value(msg)
     {:ok, script} = Script.parse_script(script_bin)
     {script, msg}
   end
 
-  def par(bin, len) when is_integer(len) do
-    <<bin::binary-size(len), rest::binary>> = bin
-    {bin, rest}
+  def parse_signature(<<sig::binary-size(64), msg::binary>>) do
+    {:ok, sig} = Signature.parse_signature(sig)
+    {sig, msg}
+  end
+
+  def parse_point(<<pk::binary-size(32), msg::binary>>) do
+    {:ok, point} = Point.lift_x(pk)
+    {point, msg}
   end
 
   def parse_items(msg, 0, items, _), do: {Enum.reverse(items), msg}
@@ -184,86 +205,22 @@ defmodule ExFacto.Messaging do
     parse_items(msg, ct-1, [item | items], parse_func)
   end
 
-  def parse_signature(<<sig::binary-size(64), msg::binary>>) do
-    {:ok, sig} = Signature.parse_signature(sig)
-    {sig, msg}
-  end
-
   def parse(msg) do
     {type, msg} = Utils.parse_compact_size_value(msg)
     type_atom = Map.fetch!(msg_types(), :binary.decode_unsigned(type))
     parser(type_atom, msg)
   end
 
-  # TODO make defp
-
-  def parser(:offer_dlc, msg) do
-    {version, msg} = par(msg, :u32)
-    {contract_flags, msg} = par(msg, :u8)
-    {chain_hash, msg} = par(msg, 32)
-    {temp_contract_id, msg} = par(msg, 32)
-    {contract_info, msg} = parser(:contract_info, msg)
-    {funding_pk_bin, msg} = par(msg, 32)
-    {:ok, funding_pubkey} = Point.lift_x(funding_pk_bin)
-    {payout_script_bin, msg} = Utils.parse_compact_size_value(msg)
-    {:ok, payout_script} = Script.parse_script(payout_script_bin)
-    {offer_collateral_amount, msg} = par(msg, :u64)
-    {funding_inputs, msg} = parser(:funding_inputs, msg)
-    {change_script_bin, msg} = Utils.parse_compact_size_value(msg)
-    {:ok, change_script} = Script.parse_script(change_script_bin)
-    {fee_rate, msg} = par(msg, :u64)
-    {cet_locktime, msg} = par(msg, :u32)
-    {refund_locktime, _msg} = par(msg, :u32)
-    # TODO: TLVs
-
-    # TODO: use new
-    %Contract.Offer{
-      version: version,
-      contract_flags: contract_flags,
-      chain_hash: chain_hash,
-      temp_contract_id: temp_contract_id,
-      contract_info: contract_info,
-      funding_pubkey: funding_pubkey,
-      payout_script: payout_script,
-      collateral_amount: offer_collateral_amount,
-      funding_inputs: funding_inputs,
-      change_script: change_script,
-      fee_rate: fee_rate,
-      cet_locktime: cet_locktime,
-      refund_locktime: refund_locktime
-    }
+  def parse_funding_witnesses(msg) do
+    {wit_ct, msg} = Utils.get_counter(msg)
+    parse_items(msg, wit_ct, [], &parse_funding_witness/1)
   end
 
-  def parser(:accept_dlc, msg) do
-    {version, msg} = par(msg, :u32)
-    {chain_hash, msg} = par(msg, 32)
-    {temp_contract_id, msg} = par(msg, 32)
-    {collateral_amount, msg} = par(msg, :u64)
-    {funding_pk_bin, msg} = par(msg, 32)
-    {:ok, funding_pubkey} = Point.lift_x(funding_pk_bin)
-    {payout_script_bin, msg} = Utils.parse_compact_size_value(msg)
-    {:ok, payout_script} = Script.parse_script(payout_script_bin)
-    {funding_inputs, msg} = parser(:funding_inputs, msg)
-    {change_script_bin, msg} = Utils.parse_compact_size_value(msg)
-    {:ok, change_script} = Script.parse_script(change_script_bin)
-    {cet_adaptor_signatures, msg} = parser(:cet_adaptor_signatures, msg)
-    {refund_signature, _msg} = parse_signature(msg)
-    # TODO: negotation_fields
-    # TODO: tlvs
-
-    %Contract.Accept{
-      version: version,
-      chain_hash: chain_hash,
-      temp_contract_id: temp_contract_id,
-      funding_pubkey: funding_pubkey,
-      payout_script: payout_script,
-      change_script: change_script,
-      collateral_amount: collateral_amount,
-      funding_inputs: funding_inputs,
-      cet_adaptor_signatures: cet_adaptor_signatures,
-      refund_signature: refund_signature
-    }
+  def parse_funding_witness(msg) do
+    Transaction.Witness.witness(msg)
   end
+
+  def empty_witness(), do: %Transaction.Witness{txinwitness: []}
 
   # def parser(:oracle_announcement, msg), do: Announcement.parse(msg)
 
@@ -277,8 +234,9 @@ defmodule ExFacto.Messaging do
   # def parser(:cet_adaptor_signatures, msg) do
   # end
 
-  # def parser(:contract_info, msg) do
-  # end
+  def parser(:contract_info, msg) do
+
+  end
 
   # unused
   # def parse_outcomes(0, msg, outcomes), do: {Enum.reverse(outcomes), msg}
@@ -287,6 +245,12 @@ defmodule ExFacto.Messaging do
   #   {outcome, msg} = par(msg, :utf8)
   #   parse_outcomes(ct - 1, msg, [outcome | outcomes])
   # end
+
+  @spec parse_funding_inputs(nonempty_binary) :: {list(funding_input_info()), binary}
+  def parse_funding_inputs(msg) do
+    {input_ct, msg} = Utils.get_counter(msg)
+    parse_funding_inputs(input_ct, msg, [])
+  end
 
   def parse_funding_inputs(0, msg, inputs), do: {Enum.reverse(inputs), msg}
 
@@ -302,13 +266,15 @@ defmodule ExFacto.Messaging do
     {sequence, msg} = par(msg, :u32)
     {max_witness_len, msg} = par(msg, :u16)
     {redeem_script, msg} = par(msg, :script)
+    {amount, msg} = par(msg, :u64)
 
     {%{
        prev_tx: tx,
        prev_vout: prev_vout,
        sequence: sequence,
        max_witness_len: max_witness_len,
-       redeem_script: redeem_script
+       redeem_script: redeem_script,
+       amount: amount
      }, msg}
   end
 end

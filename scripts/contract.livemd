@@ -19,11 +19,17 @@ Mix.install(
 ```
 ==> exfacto
 Compiling 1 file (.ex)
-warning: Builder.build_funding_outpoint/2 is undefined (module Builder is not available or is yet to be defined)
-  lib/builder.ex:32: ExFacto.Builder.build_funding_tx/3
+warning: variable "accept_funding_pubkey" is unused (if the variable is not meant to be used, prefix it with an underscore)
+  lib/gambler.ex:200: ExFacto.Gambler.accepter_sign_funding_tx/5
 
-warning: ExFacto.Oracle.attestation_sighash/1 is undefined or private
-  lib/gambler.ex:314: ExFacto.Gambler.encrypted_sign_cet/6
+warning: variable "fully_signed_funding_tx" is unused (if the variable is not meant to be used, prefix it with an underscore)
+  lib/gambler.ex:202: ExFacto.Gambler.accepter_sign_funding_tx/5
+
+warning: variable "offer_funding_pubkey" is unused (if the variable is not meant to be used, prefix it with an underscore)
+  lib/gambler.ex:200: ExFacto.Gambler.accepter_sign_funding_tx/5
+
+warning: variable "offer_funding_signature" is unused (if the variable is not meant to be used, prefix it with an underscore)
+  lib/gambler.ex:200: ExFacto.Gambler.accepter_sign_funding_tx/5
 
 ```
 
@@ -61,7 +67,8 @@ fake_tx = fn out ->
       %Transaction.In{
         prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
         prev_vout: 0,
-        sequence_no: default_sequence
+        sequence_no: default_sequence,
+        script_sig: ""
       }
     ],
     outputs: [out],
@@ -87,11 +94,11 @@ oracle = Oracle.new()
 ```
 %ExFacto.Oracle{
   sk: %Bitcoinex.Secp256k1.PrivateKey{
-    d: 50979712920370032692495550496283532838071651016308345377735091164047675625038
+    d: 41517770347379707447018678463658871184240225040225240420305486287035665169740
   },
   pk: %Bitcoinex.Secp256k1.Point{
-    x: 19218400594751540045774484767086516340603401269042319760364653134779267209948,
-    y: 89345899942870000047878299078890344477138717904169795869894327314047161710412,
+    x: 90394080248216755336278589138434108617948471155360081382669869140596986363036,
+    y: 101474560319959597992285788353007897145330334507718858322618522004866641165264,
     z: 0
   }
 }
@@ -115,14 +122,14 @@ event_descriptor = %{outcomes: outcomes}
 
 ```
 {%Bitcoinex.Secp256k1.PrivateKey{
-   d: 103863451637765303007513944145432930821316789830768678902110248505308228609358
+   d: 3896518685332606276469593048127006647769667669530159676981433147645029338484
  },
  %ExFacto.Event{
-   id: "3f2a1ef01ff9dc24e212a94c018e38100d7101281ce9447e2cd715c0e0f61a34",
+   id: "de8a901b458d1504db47fec55f54c5e1328be0a53a9ec6f082e2f001a74791bf",
    nonce_points: [
      %Bitcoinex.Secp256k1.Point{
-       x: 19779733666843603088749840891545697294542856289109025466061858842209840537386,
-       y: 31492073498159704772344543060385079231132107940282471080914858682372464243526,
+       x: 111067853723109968862341562502361849308420935890317445403151459456451655546007,
+       y: 98219862061597619972871948524344880289430062140482313443135300385384860800316,
        z: 0
      }
    ],
@@ -142,20 +149,20 @@ announcement = Oracle.sign_event(oracle, event)
 ```
 %ExFacto.Oracle.Announcement{
   signature: %Bitcoinex.Secp256k1.Signature{
-    r: 93303504379280693540858385689372989348358332938641106680923722651069106343540,
-    s: 32472568180699540036579180919513429408547805011525280633880711830764253337503
+    r: 74394279223756576794272994696959201136545732660825157347207683579661196532062,
+    s: 15088053102944490215898831902819553553708576856562884099012052197723821337344
   },
   public_key: %Bitcoinex.Secp256k1.Point{
-    x: 19218400594751540045774484767086516340603401269042319760364653134779267209948,
-    y: 89345899942870000047878299078890344477138717904169795869894327314047161710412,
+    x: 90394080248216755336278589138434108617948471155360081382669869140596986363036,
+    y: 101474560319959597992285788353007897145330334507718858322618522004866641165264,
     z: 0
   },
   event: %ExFacto.Event{
-    id: "3f2a1ef01ff9dc24e212a94c018e38100d7101281ce9447e2cd715c0e0f61a34",
+    id: "de8a901b458d1504db47fec55f54c5e1328be0a53a9ec6f082e2f001a74791bf",
     nonce_points: [
       %Bitcoinex.Secp256k1.Point{
-        x: 19779733666843603088749840891545697294542856289109025466061858842209840537386,
-        y: 31492073498159704772344543060385079231132107940282471080914858682372464243526,
+        x: 111067853723109968862341562502361849308420935890317445403151459456451655546007,
+        y: 98219862061597619972871948524344880289430062140482313443135300385384860800316,
         z: 0
       }
     ],
@@ -196,7 +203,8 @@ alice_funding_inputs = [
     0,
     default_sequence,
     p2tr_keyspend_witness_len,
-    nil
+    nil,
+    100_000_000
   )
 ]
 ```
@@ -206,6 +214,7 @@ alice_funding_inputs = [
 ```
 [
   %{
+    amount: 100000000,
     max_witness_len: 64,
     prev_tx: %Bitcoinex.Transaction{
       version: 2,
@@ -213,21 +222,21 @@ alice_funding_inputs = [
         %Bitcoinex.Transaction.In{
           prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
           prev_vout: 0,
-          script_sig: nil,
+          script_sig: "",
           sequence_no: 4294967294
         }
       ],
       outputs: [
         %Bitcoinex.Transaction.Out{
           value: 100000000,
-          script_pub_key: "5120f8bd0a546b7645002e65c9c0b2fd48ed851051d5d68de70b31f6a354465aa70d"
+          script_pub_key: "512086143e7dcfd988633682be2b71c5f556a9ed930aef8cc1bfaded0eed56215b31"
         }
       ],
       witnesses: nil,
       lock_time: 0
     },
     prev_vout: 0,
-    redeem_script: nil,
+    redeem_script: "",
     sequence: 4294967294
   }
 ]
@@ -266,6 +275,7 @@ alice =
   },
   funding_inputs: [
     %{
+      amount: 100000000,
       max_witness_len: 64,
       prev_tx: %Bitcoinex.Transaction{
         version: 2,
@@ -273,46 +283,46 @@ alice =
           %Bitcoinex.Transaction.In{
             prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
             prev_vout: 0,
-            script_sig: nil,
+            script_sig: "",
             sequence_no: 4294967294
           }
         ],
         outputs: [
           %Bitcoinex.Transaction.Out{
             value: 100000000,
-            script_pub_key: "5120f8bd0a546b7645002e65c9c0b2fd48ed851051d5d68de70b31f6a354465aa70d"
+            script_pub_key: "512086143e7dcfd988633682be2b71c5f556a9ed930aef8cc1bfaded0eed56215b31"
           }
         ],
         witnesses: nil,
         lock_time: 0
       },
       prev_vout: 0,
-      redeem_script: nil,
+      redeem_script: "",
       sequence: 4294967294
     }
   ],
   fund_sk: %Bitcoinex.Secp256k1.PrivateKey{
-    d: 93208144617302964064733892096539916448464565254875088566670777267824712090347
+    d: 68415209923777931777203004566643605552914882319971151047836778550893745934679
   },
   fund_pk: %Bitcoinex.Secp256k1.Point{
-    x: 20579193276862524649680766841475678419627072166969290935965914347865052197438,
-    y: 112489858350612282984219646905876642367169671696583247720573135291822473057720,
+    x: 13046381441185578206173916196553656771870467164262121847591027029131609172334,
+    y: 19220529104632635439108914606164677963810106594662176468734601431709699342552,
     z: 0
   },
   change_script: %Bitcoinex.Script{
     items: [
       81,
       32,
-      <<174, 14, 19, 120, 227, 163, 139, 192, 85, 21, 177, 117, 188, 61, 1, 156, 240, 158, 76, 56,
-        182, 74, 50, 67, 193, 204, 88, 240, 199, 124, 209, 75>>
+      <<3, 147, 139, 165, 52, 158, 91, 119, 2, 23, 7, 49, 251, 30, 210, 60, 208, 255, 97, 219, 39,
+        225, 11, 187, 16, 179, 110, 4, 209, 63, 242, 219>>
     ]
   },
   payout_script: %Bitcoinex.Script{
     items: [
       81,
       32,
-      <<161, 164, 123, 114, 196, 221, 180, 160, 55, 237, 233, 108, 134, 0, 146, 172, 136, 229, 130,
-        238, 45, 251, 235, 74, 231, 229, 5, 71, 145, 152, 37, 74>>
+      <<39, 172, 241, 119, 115, 83, 253, 32, 178, 181, 16, 130, 62, 44, 139, 86, 194, 162, 101, 249,
+        203, 42, 16, 233, 167, 108, 250, 85, 140, 148, 157, 33>>
     ]
   }
 }
@@ -368,20 +378,20 @@ offer =
     descriptor: [{"CHIEFS WIN", 0}, {"EAGLES WIN", 100000000}],
     oracle_info: %ExFacto.Oracle.Announcement{
       signature: %Bitcoinex.Secp256k1.Signature{
-        r: 93303504379280693540858385689372989348358332938641106680923722651069106343540,
-        s: 32472568180699540036579180919513429408547805011525280633880711830764253337503
+        r: 74394279223756576794272994696959201136545732660825157347207683579661196532062,
+        s: 15088053102944490215898831902819553553708576856562884099012052197723821337344
       },
       public_key: %Bitcoinex.Secp256k1.Point{
-        x: 19218400594751540045774484767086516340603401269042319760364653134779267209948,
-        y: 89345899942870000047878299078890344477138717904169795869894327314047161710412,
+        x: 90394080248216755336278589138434108617948471155360081382669869140596986363036,
+        y: 101474560319959597992285788353007897145330334507718858322618522004866641165264,
         z: 0
       },
       event: %ExFacto.Event{
-        id: "3f2a1ef01ff9dc24e212a94c018e38100d7101281ce9447e2cd715c0e0f61a34",
+        id: "de8a901b458d1504db47fec55f54c5e1328be0a53a9ec6f082e2f001a74791bf",
         nonce_points: [
           %Bitcoinex.Secp256k1.Point{
-            x: 19779733666843603088749840891545697294542856289109025466061858842209840537386,
-            y: 31492073498159704772344543060385079231132107940282471080914858682372464243526,
+            x: 111067853723109968862341562502361849308420935890317445403151459456451655546007,
+            y: 98219862061597619972871948524344880289430062140482313443135300385384860800316,
             z: 0
           }
         ],
@@ -391,21 +401,22 @@ offer =
     }
   },
   funding_pubkey: %Bitcoinex.Secp256k1.Point{
-    x: 20579193276862524649680766841475678419627072166969290935965914347865052197438,
-    y: 112489858350612282984219646905876642367169671696583247720573135291822473057720,
+    x: 13046381441185578206173916196553656771870467164262121847591027029131609172334,
+    y: 19220529104632635439108914606164677963810106594662176468734601431709699342552,
     z: 0
   },
   payout_script: %Bitcoinex.Script{
     items: [
       81,
       32,
-      <<161, 164, 123, 114, 196, 221, 180, 160, 55, 237, 233, 108, 134, 0, 146, 172, 136, 229, 130,
-        238, 45, 251, 235, 74, 231, 229, 5, 71, 145, 152, 37, 74>>
+      <<39, 172, 241, 119, 115, 83, 253, 32, 178, 181, 16, 130, 62, 44, 139, 86, 194, 162, 101, 249,
+        203, 42, 16, 233, 167, 108, 250, 85, 140, 148, 157, 33>>
     ]
   },
   collateral_amount: 50000000,
   funding_inputs: [
     %{
+      amount: 100000000,
       max_witness_len: 64,
       prev_tx: %Bitcoinex.Transaction{
         version: 2,
@@ -413,21 +424,21 @@ offer =
           %Bitcoinex.Transaction.In{
             prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
             prev_vout: 0,
-            script_sig: nil,
+            script_sig: "",
             sequence_no: 4294967294
           }
         ],
         outputs: [
           %Bitcoinex.Transaction.Out{
             value: 100000000,
-            script_pub_key: "5120f8bd0a546b7645002e65c9c0b2fd48ed851051d5d68de70b31f6a354465aa70d"
+            script_pub_key: "512086143e7dcfd988633682be2b71c5f556a9ed930aef8cc1bfaded0eed56215b31"
           }
         ],
         witnesses: nil,
         lock_time: 0
       },
       prev_vout: 0,
-      redeem_script: nil,
+      redeem_script: "",
       sequence: 4294967294
     }
   ],
@@ -435,8 +446,8 @@ offer =
     items: [
       81,
       32,
-      <<174, 14, 19, 120, 227, 163, 139, 192, 85, 21, 177, 117, 188, 61, 1, 156, 240, 158, 76, 56,
-        182, 74, 50, 67, 193, 204, 88, 240, 199, 124, 209, 75>>
+      <<3, 147, 139, 165, 52, 158, 91, 119, 2, 23, 7, 49, 251, 30, 210, 60, 208, 255, 97, 219, 39,
+        225, 11, 187, 16, 179, 110, 4, 209, 63, 242, 219>>
     ]
   },
   fee_rate: 2,
@@ -467,7 +478,8 @@ bob_funding_inputs = [
     0,
     default_sequence,
     p2tr_keyspend_witness_len,
-    nil
+    nil,
+    100_000_000
   )
 ]
 
@@ -493,6 +505,7 @@ bob = Gambler.new(bob_funding_inputs, bob_change_addr, bob_payout_addr, &Utils.n
   },
   funding_inputs: [
     %{
+      amount: 100000000,
       max_witness_len: 64,
       prev_tx: %Bitcoinex.Transaction{
         version: 2,
@@ -500,46 +513,46 @@ bob = Gambler.new(bob_funding_inputs, bob_change_addr, bob_payout_addr, &Utils.n
           %Bitcoinex.Transaction.In{
             prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
             prev_vout: 0,
-            script_sig: nil,
+            script_sig: "",
             sequence_no: 4294967294
           }
         ],
         outputs: [
           %Bitcoinex.Transaction.Out{
             value: 100000000,
-            script_pub_key: "5120acd9a4e737e5215d7d9a762cd850ca7e5efd96c8adbaa242928006fbde4bda1c"
+            script_pub_key: "51200a31874e737159447c69fb284a8cb890533f5cc7096448cc441aa6f2793384e6"
           }
         ],
         witnesses: nil,
         lock_time: 0
       },
       prev_vout: 0,
-      redeem_script: nil,
+      redeem_script: "",
       sequence: 4294967294
     }
   ],
   fund_sk: %Bitcoinex.Secp256k1.PrivateKey{
-    d: 64331841331817098814915668456726067521528304707006795106136369107680936482883
+    d: 22794549674217516912617853295861646978498044102180132299109512367178627576041
   },
   fund_pk: %Bitcoinex.Secp256k1.Point{
-    x: 111417248211528913251798767388351049034007970244472971010035977875924154427798,
-    y: 32090172582068646463910238544253628498301441456367360896897880316159252106302,
+    x: 112039435473582708901458290925425415208882676393698153661281452299195342881455,
+    y: 47847476984214126585697553188068862326082371309665069708919202593013279008408,
     z: 0
   },
   change_script: %Bitcoinex.Script{
     items: [
       81,
       32,
-      <<190, 117, 135, 253, 138, 6, 232, 190, 167, 65, 8, 94, 254, 171, 30, 252, 149, 17, 16, 134,
-        205, 150, 221, 16, 198, 253, 140, 47, 70, 126, 233, 35>>
+      <<190, 6, 92, 58, 182, 203, 65, 111, 29, 96, 180, 56, 137, 17, 17, 235, 217, 21, 139, 78, 248,
+        151, 241, 176, 89, 140, 14, 35, 136, 117, 220, 234>>
     ]
   },
   payout_script: %Bitcoinex.Script{
     items: [
       81,
       32,
-      <<191, 166, 13, 77, 113, 131, 78, 169, 31, 175, 200, 150, 124, 184, 163, 128, 221, 176, 247,
-        218, 73, 118, 238, 113, 9, 197, 5, 130, 97, 27, 147, 213>>
+      <<214, 239, 31, 160, 153, 152, 35, 1, 93, 149, 173, 160, 195, 196, 166, 44, 54, 83, 123, 247,
+        174, 194, 66, 32, 2, 138, 145, 60, 224, 225, 133, 199>>
     ]
   }
 }
@@ -547,10 +560,201 @@ bob = Gambler.new(bob_funding_inputs, bob_change_addr, bob_payout_addr, &Utils.n
 
 ## Bob Accepts Alice's Offer
 
-Alice can send bob an encoding of her offer, or a coordinator can help Bob find Alice's offer. In either case, Bob will now create an Accept to Alice's Offer.
+Alice can send Bob an encoding of her offer, or a coordinator can help Bob find Alice's offer. In either case, Bob will now create an Accept to Alice's Offer.
 
 From the Offer, Bob has all the info he needs to construct the full Funding Tx, CETs for each outcome, and a refund tx.
 
 ```elixir
 {accept, funding_tx, outcomes_cet_txs, refund_tx} = Gambler.create_accept(bob, offer)
 ```
+
+<!-- livebook:{"output":true} -->
+
+```
+{%ExFacto.Contract.Accept{
+   version: 0,
+   chain_hash: <<0, 0, 0, 0, 9, 51, 234, 1, 173, 14, 233, 132, 32, 151, 121, 186, 174, 195, 206,
+     217, 15, 163, 244, 8, 113, 149, 38, 248, 215, 127, 73, 67>>,
+   temp_contract_id: <<0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+     0, 0, 0, 0, 0, 0>>,
+   funding_pubkey: %Bitcoinex.Secp256k1.Point{
+     x: 112039435473582708901458290925425415208882676393698153661281452299195342881455,
+     y: 47847476984214126585697553188068862326082371309665069708919202593013279008408,
+     z: 0
+   },
+   payout_script: %Bitcoinex.Script{
+     items: [
+       81,
+       32,
+       <<214, 239, 31, 160, 153, 152, 35, 1, 93, 149, 173, 160, 195, 196, 166, 44, 54, 83, 123, 247,
+         174, 194, 66, 32, 2, 138, 145, 60, 224, 225, 133, 199>>
+     ]
+   },
+   change_script: %Bitcoinex.Script{
+     items: [
+       81,
+       32,
+       <<190, 6, 92, 58, 182, 203, 65, 111, 29, 96, 180, 56, 137, 17, 17, 235, 217, 21, 139, 78,
+         248, 151, 241, 176, 89, 140, 14, 35, 136, 117, 220, 234>>
+     ]
+   },
+   collateral_amount: 50000000,
+   funding_inputs: [
+     %{
+       amount: 100000000,
+       max_witness_len: 64,
+       prev_tx: %Bitcoinex.Transaction{
+         version: 2,
+         inputs: [
+           %Bitcoinex.Transaction.In{
+             prev_txid: "bcda2fe66ca90e922c3679b224b7b38e34660049a597a8193b850e951c90b268",
+             prev_vout: 0,
+             script_sig: "",
+             sequence_no: 4294967294
+           }
+         ],
+         outputs: [
+           %Bitcoinex.Transaction.Out{
+             value: 100000000,
+             script_pub_key: "51200a31874e737159447c69fb284a8cb890533f5cc7096448cc441aa6f2793384e6"
+           }
+         ],
+         witnesses: nil,
+         lock_time: 0
+       },
+       prev_vout: 0,
+       redeem_script: "",
+       sequence: 4294967294
+     }
+   ],
+   cet_adaptor_signatures: [
+     {%Bitcoinex.Secp256k1.Signature{
+        r: 8452702831967167134703690397529993049769102016778040255098083991433522811449,
+        s: 63666919473820067314254645779439296819988898893398369473825423844020090159738
+      }, false},
+     {%Bitcoinex.Secp256k1.Signature{
+        r: 28865194841104661565299824354531180288040977263529974854078615047551017151669,
+        s: 46772989195977650514826199438298360424789156412303377065601723456687270232192
+      }, false}
+   ],
+   refund_signature: %Bitcoinex.Secp256k1.Signature{
+     r: 3446189794769019937421287423656059447725566735138465699609476512815498798044,
+     s: 51700873519172705935495752734112586584693969938438194293647447316060972020934
+   },
+   dummy_tapkey_tweak: 26818449057611358697594695413520937708107939349737122417988390949518817463526,
+   negotiation_fields: nil,
+   tlvs: nil
+ },
+ %Bitcoinex.Transaction{
+   version: 2,
+   inputs: [
+     %Bitcoinex.Transaction.In{
+       prev_txid: "70667325da39c7dceeaee87fe66ee0f239e8ec786e97a07664e0c3b4dd33c23e",
+       prev_vout: 0,
+       script_sig: "",
+       sequence_no: 4294967294
+     },
+     %Bitcoinex.Transaction.In{
+       prev_txid: "93afeec43618c56213b8512bc3d49cca2f900f42728cdedb988b93d8b97fdf8f",
+       prev_vout: 0,
+       script_sig: "",
+       sequence_no: 4294967294
+     }
+   ],
+   outputs: [
+     %Bitcoinex.Transaction.Out{
+       value: 49999490,
+       script_pub_key: "512003938ba5349e5b7702170731fb1ed23cd0ff61db27e10bbb10b36e04d13ff2db"
+     },
+     %Bitcoinex.Transaction.Out{
+       value: 49999490,
+       script_pub_key: "5120be065c3ab6cb416f1d60b438891111ebd9158b4ef897f1b0598c0e238875dcea"
+     },
+     %Bitcoinex.Transaction.Out{
+       value: 100000512,
+       script_pub_key: "512069bc5f62122f97471378efd0000db37cb8629b5b1c7b5e3a1c0529738efc4ac8"
+     }
+   ],
+   witnesses: nil,
+   lock_time: 0
+ },
+ [
+   {"CHIEFS WIN",
+    %Bitcoinex.Transaction{
+      version: 2,
+      inputs: [
+        %Bitcoinex.Transaction.In{
+          prev_txid: "8bee0afb0a08313c8bef39d18512bb4f5c428cc01205008ed4493e8d7b85130b",
+          prev_vout: 2,
+          script_sig: "",
+          sequence_no: 4294967294
+        }
+      ],
+      outputs: [
+        %Bitcoinex.Transaction.Out{
+          value: 0,
+          script_pub_key: "512027acf1777353fd20b2b510823e2c8b56c2a265f9cb2a10e9a76cfa558c949d21"
+        },
+        %Bitcoinex.Transaction.Out{
+          value: 100000000,
+          script_pub_key: "5120d6ef1fa0999823015d95ada0c3c4a62c36537bf7aec24220028a913ce0e185c7"
+        }
+      ],
+      witnesses: nil,
+      lock_time: 1678498879
+    }},
+   {"EAGLES WIN",
+    %Bitcoinex.Transaction{
+      version: 2,
+      inputs: [
+        %Bitcoinex.Transaction.In{
+          prev_txid: "8bee0afb0a08313c8bef39d18512bb4f5c428cc01205008ed4493e8d7b85130b",
+          prev_vout: 2,
+          script_sig: "",
+          sequence_no: 4294967294
+        }
+      ],
+      outputs: [
+        %Bitcoinex.Transaction.Out{
+          value: 100000000,
+          script_pub_key: "512027acf1777353fd20b2b510823e2c8b56c2a265f9cb2a10e9a76cfa558c949d21"
+        },
+        %Bitcoinex.Transaction.Out{
+          value: 0,
+          script_pub_key: "5120d6ef1fa0999823015d95ada0c3c4a62c36537bf7aec24220028a913ce0e185c7"
+        }
+      ],
+      witnesses: nil,
+      lock_time: 1678498879
+    }}
+ ],
+ %Bitcoinex.Transaction{
+   version: 2,
+   inputs: [
+     %Bitcoinex.Transaction.In{
+       prev_txid: "8bee0afb0a08313c8bef39d18512bb4f5c428cc01205008ed4493e8d7b85130b",
+       prev_vout: 2,
+       script_sig: "",
+       sequence_no: 4294967294
+     }
+   ],
+   outputs: [
+     %Bitcoinex.Transaction.Out{
+       value: 50000000,
+       script_pub_key: "5120d6ef1fa0999823015d95ada0c3c4a62c36537bf7aec24220028a913ce0e185c7"
+     },
+     %Bitcoinex.Transaction.Out{
+       value: 50000000,
+       script_pub_key: "512027acf1777353fd20b2b510823e2c8b56c2a265f9cb2a10e9a76cfa558c949d21"
+     }
+   ],
+   witnesses: [],
+   lock_time: 1679702879
+ }}
+```
+
+## Alice ACKs the Accept, Signs Funding Transaction
+
+Once Alice receives the Accept message from Bob, she has enough information to sign the funding transaction and encrypted_sign the CETs. She will then send those results back to Bob, who will broadcast the Funding transaction.
+
+Bob gets a free option here (for now). In the future, we will integrate a Barrier Oracle to eliminate this, but that requires another round or synchronous communication.

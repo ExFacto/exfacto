@@ -29,7 +29,7 @@ defmodule ExFacto.Builder do
     funding_txid = Transaction.transaction_id(funding_tx)
 
     # fund_outpoint used as single input to CETs & Refund tx
-    funding_outpoint = Builder.build_funding_outpoint(funding_txid, funding_vout)
+    funding_outpoint = build_funding_outpoint(funding_txid, funding_vout)
 
     # TODO: also build and return psbt
     {funding_tx, funding_outpoint}
@@ -59,7 +59,7 @@ defmodule ExFacto.Builder do
       script_pub_key: Script.to_hex(fund_scriptpubkey)
     }
 
-    valid = Script.validate_unsolvable_internal_key(funding_output.script_pub_key, fund_leaf, dummy_tapkey_tweak)
+    valid = Script.validate_unsolvable_internal_key(fund_scriptpubkey, fund_leaf, dummy_tapkey_tweak)
     if !valid, do:
       raise "invalid internal key, keypath spend not provably unspendable. Foul play suspected."
 
@@ -306,7 +306,7 @@ defmodule ExFacto.Builder do
   @spec script_sig_wu(%{:redeem_script => Script.t() | nil}) :: non_neg_integer
   def script_sig_wu(input) do
     redeem_script = Map.get(input, :redeem_script, nil)
-    if redeem_script == nil do
+    if redeem_script == nil || redeem_script == "" do
       txin_empty_scriptsig_wu()
     else
       byte_size(Utils.script_with_big_size(redeem_script)) * @wu_per_vbyte

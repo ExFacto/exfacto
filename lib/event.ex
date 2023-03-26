@@ -31,7 +31,8 @@ defmodule ExFacto.Event do
   def serialize(event) do
     {ct, ser_nonces} = Utils.serialize_with_count(event.nonce_points, &Point.x_bytes/1)
 
-    Messaging.ser(ct, :u16) <>
+    # BUG is this bigsize or u16
+    Messaging.ser(ct, :u32) <>
       ser_nonces <>
       Messaging.ser(event.maturity_epoch, :u32) <>
       serialize_event_descriptor(event.descriptor) <>
@@ -45,7 +46,8 @@ defmodule ExFacto.Event do
   end
 
   def parse(msg) do
-    {nonce_ct, msg} = Utils.get_counter(msg)
+    # BUG is this bigsize or u16
+    {nonce_ct, msg} = Messaging.par(msg, :u32)
     {nonce_points, msg} = Messaging.parse_items(msg, nonce_ct, [], &parse_nonce_point/1)
     {maturity_epoch, msg} = Messaging.par(msg, :u32)
     {descriptor, msg} = parse_event_descriptor(msg)
@@ -67,14 +69,17 @@ defmodule ExFacto.Event do
 
   def serialize_event_descriptor(descriptor) do
     {ct, ser_outcomes} =
-      Utils.serialize_with_count(descriptor.outcomes, &Messaging.serialize_outcome/1)
+      Utils.serialize_with_count(descriptor.outcomes, fn o -> Messaging.ser(o, :utf8) end)
 
-    Messaging.ser(ct, :u16) <> ser_outcomes
+      # BUG is this u16 or u32? see spec
+    Messaging.ser(ct, :u32) <> ser_outcomes
   end
 
   def parse_event_descriptor(msg) do
+    # BUG is this u16 or u32? see spec
     {outcome_ct, msg} = Messaging.par(msg, :u32)
-    Messaging.parse_items(msg, outcome_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
+    {outcomes, msg} = Messaging.parse_items(msg, outcome_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
+    {%{outcomes: outcomes}, msg}
   end
 
   # Assuming Enum.
@@ -114,7 +119,7 @@ defmodule ExFacto.Event do
   # def get_outcome_sighash(%__MODULE__{outcomes: outcomes}, idx) do
   #   outcomes
   #   |> Enum.at(idx)
-  #   |> ExFacto.Oracle.attestation_sighash()
+  #   |> ExFacto.Oracle.Attestation.sighash()
   #   |> :binary.decode_unsigned()
   # end
 

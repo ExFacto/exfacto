@@ -71,6 +71,7 @@ defmodule ExFacto.Utils do
     {value, remaining}
   end
 
+  @spec with_big_size(binary) :: binary
   def with_big_size(data) do
     data
     |> byte_size()

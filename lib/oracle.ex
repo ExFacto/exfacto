@@ -30,9 +30,9 @@ defmodule ExFacto.Oracle do
           announcement: Announcement.t()
         }
 
-  def serialize_oracle_info(o) do
-    Announcement.serialize(o.announcement)
-  end
+  def serialize_oracle_info(o), do: Announcement.serialize(o)
+
+  def parse_oracle_info(msg), do: Announcement.parse(msg)
 
   @doc """
     sign_event returns an oracle_announcement
@@ -147,7 +147,7 @@ defmodule ExFacto.Oracle.Attestation do
   def serialize(event_id, pubkey, signatures, outcomes) do
     {sig_ct, ser_sigs} = Utils.serialize_with_count(signatures, &Signature.serialize_signature/1)
     # ensure same number of sigs as outcomes
-    {^sig_ct, ser_outcomes} = Utils.serialize_with_count(outcomes, &Messaging.serialize_outcome/1)
+    {^sig_ct, ser_outcomes} = Utils.serialize_with_count(outcomes, fn o -> Messaging.ser(o, :utf8) end)
 
     Messaging.ser(event_id, :utf8) <>
       Point.x_bytes(pubkey) <>

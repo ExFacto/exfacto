@@ -1,0 +1,15 @@
+fix sighash as int vs bin
+defp for all unnecessary exports
+standardize par / ser syntax
+
+add Message Type prefixes
+
+Tests for messaging symmetry
+
+Tests for everything
+
+figure out how to sort signatures for funding input spend
+
+figure out how to sort Witnesses for funding tx
+
+standardize use of new_randomness functions so that we can plug in other entropy sources

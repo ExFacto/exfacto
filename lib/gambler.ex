@@ -113,6 +113,9 @@ defmodule ExFacto.Gambler do
           change_outputs
         )
 
+      signed_funding_tx = sign_funding_tx(funding_tx)
+      funding_witness = signed_funding_tx.witnesses
+
       # Build refund tx
       {refund_tx, refund_signature} =
         build_and_sign_refund_tx(
@@ -132,16 +135,17 @@ defmodule ExFacto.Gambler do
           offer.chain_hash,
           offer.temp_contract_id,
           g.fund_pk,
+          dummy_tapkey_tweak,
           g.payout_script,
           g.change_script,
           accept_collateral,
           g.funding_inputs,
+          funding_witness,
           cet_adaptor_signatures,
-          refund_signature,
-          dummy_tapkey_tweak
+          refund_signature
         )
 
-      {accept, funding_tx, outcomes_cet_txs, refund_tx}
+      {accept, signed_funding_tx, outcomes_cet_txs, refund_tx}
     end
   end
 
@@ -192,18 +196,18 @@ defmodule ExFacto.Gambler do
     # TODO how is this done?
     signed_funding_tx = sign_funding_tx(funding_tx)
 
-    # the signatures need to go back to the accepter who can then sign the funding tx and broadcast
+    # the signed funding_tx can be broadcast
     # the txs just need to be saved by the client, not shared
     {signed_funding_tx, outcomes_cet_txs, cet_adaptor_signatures, refund_tx, refund_signature}
   end
 
-  def accepter_sign_funding_tx(_g, funding_tx, offer_funding_signature, accept_funding_pubkey, offer_funding_pubkey) do
-    # TODO
-    fully_signed_funding_tx = sign_funding_tx(funding_tx)
+  # def accepter_sign_funding_tx(_g, funding_tx, offer_funding_signature, accept_funding_pubkey, offer_funding_pubkey) do
+  #   # TODO
+  #   fully_signed_funding_tx = sign_funding_tx(funding_tx)
 
-    # broadcast funding_tx
-    # BTCRPC.sendrawtransaction()
-  end
+  #   # broadcast funding_tx
+  #   # BTCRPC.sendrawtransaction()
+  # end
 
 
   # SIGNER
@@ -262,7 +266,7 @@ defmodule ExFacto.Gambler do
 
       cet_adaptor_signatures =
         Enum.map(outcomes_cet_adaptor_signatures, fn {_, adaptor_sig, was_negated} ->
-          {adaptor_sig, was_negated}
+          %{adaptor_signature: adaptor_sig, was_negated: was_negated}
         end)
 
 
@@ -271,11 +275,14 @@ defmodule ExFacto.Gambler do
 
   def sign_settlement_tx(g = %__MODULE__{}, settlement_tx = %Transaction{},
     funding_output, fund_leaf) do
+
+      {:ok, script} = Script.parse_script(funding_output.script_pub_key)
+      prev_scriptpubkey = Script.serialize_with_compact_size(script)
     settlement_sighash =
       settlement_sighash(
         settlement_tx,
         [funding_output.value],
-        [funding_output.script_pub_key],
+        [prev_scriptpubkey],
         fund_leaf
       )
 
@@ -311,16 +318,19 @@ defmodule ExFacto.Gambler do
       ) do
     # funding transactions
 
-    outcome_sighash = Oracle.attestation_sighash(outcome)
+    outcome_sighash = Oracle.Attestation.sighash(outcome)
 
     outcome_sig_point =
       Schnorr.calculate_signature_point(nonce_point, oracle_pubkey, outcome_sighash)
+
+    {:ok, script} = Script.parse_script(funding_output.script_pub_key)
+    prev_scriptpubkey = Script.serialize_with_compact_size(script)
 
     cet_sighash =
       settlement_sighash(
         cet_tx,
         [funding_output.value],
-        [funding_output.script_pub_key],
+        [prev_scriptpubkey],
         fund_leaf
       )
 
@@ -346,15 +356,16 @@ defmodule ExFacto.Gambler do
   # sign funding tx
 
   # TODO IMPLEMENT ME!
-  def sign_funding_tx(_funding_tx) do
-    %Bitcoinex.Secp256k1.Signature{r: 1, s: 1}
+  def sign_funding_tx(funding_tx) do
+    # sig = %Bitcoinex.Secp256k1.Signature{r: 1, s: 1}
+    funding_tx
   end
 
   # OLD
 
-  def verify_fund_scriptpubkey(fund_scriptpubkey, r) do
+  def verify_fund_scriptpubkey(fund_scriptpubkey, dummy_taptweak_key) do
     ## TODO: 2nd arg
-    Script.validate_unsolvable_internal_key(fund_scriptpubkey, nil, r)
+    Script.validate_unsolvable_internal_key(fund_scriptpubkey, nil, dummy_taptweak_key)
   end
 
   # def recv_cets(g, cets) do

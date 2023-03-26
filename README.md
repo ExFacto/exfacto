@@ -12,6 +12,7 @@ For several reasons, we chose not to fully implement the DLC spec being worked o
 - The DLC spec is unnecessarily complex and verbose. We chose to drop the extra TLVs and Negotiation Fields from Offers and Accepts.
 - We opted to sort inputs lexicographically by outpoint (txid:vout) and outputs lexicographically by scriptpubkey instead of using `serial_id`s to determine input and output ordering. See: BIP-69
 - We will not support P2SH-wrapped SegWit inputs to funding transactions.
+- We have the Accepter sign the funding transaction as part of the Accept message, eliminating the need for the Offerer to send signatures back to the Accepter.
 
 With this said, we closely followed this spec as a guideline and significant thanks are owed to the creators of the spec for showing us how to build a DLC platform.
 - We used the TLV format for encoding messages.
