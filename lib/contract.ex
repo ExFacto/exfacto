@@ -7,14 +7,12 @@ defmodule ExFacto.Contract do
   @spec default_contract_flags :: 0
   def default_contract_flags(), do: @default_contract_flags
 
-
   @type t :: %__MODULE__{
           total_collateral: non_neg_integer(),
           # For now, no numerics
           descriptor: contract_descriptor_enum(),
           oracle_info: Oracle.oracle_info()
         }
-
 
   defstruct [
     :total_collateral,
@@ -81,30 +79,29 @@ defmodule ExFacto.Contract do
   def calculate_contract_id(
         <<funding_txid::big-size(256)>>,
         funding_vout,
-        <<contract_temp_id::big-size(256)>>
+        <<offer_id::big-size(256)>>
       ) do
     # why does the spec say the vout will only affect the last 2 bytes of the txid XOR temp_id when vout is 4 bytes
     # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Protocol.md#definition-of-contract_id
-    vout_binary = Bitwise.band(funding_vout, 0xFFFF)
+    # vout_binary = Bitwise.band(funding_vout, 0xFFFF)
 
-    Bitwise.bxor(funding_txid, contract_temp_id)
-    |> Bitwise.bxor(vout_binary)
+    Bitwise.bxor(funding_txid, offer_id)
+    |> Bitwise.bxor(funding_vout)
     |> :binary.encode_unsigned()
   end
 end
 
 defmodule ExFacto.Contract.Offer do
+  alias ExFacto.Oracle.Announcement
   alias ExFacto.{Messaging, Utils, Contract}
   alias Bitcoinex.Secp256k1.{Point, Signature}
   alias Bitcoinex.Script
-
-  # @offer_dlc_type 42778
 
   @type t :: %__MODULE__{
           version: non_neg_integer(),
           contract_flags: non_neg_integer(),
           chain_hash: <<_::256>>,
-          temp_contract_id: <<_::256>>,
+          offer_id: <<_::256>>,
           contract_info: Contract.t(),
           funding_pubkey: Point.t(),
           payout_script: Script.t(),
@@ -122,7 +119,7 @@ defmodule ExFacto.Contract.Offer do
     :version,
     :contract_flags,
     :chain_hash,
-    :temp_contract_id,
+    :offer_id,
     :contract_info,
     :funding_pubkey,
     :payout_script,
@@ -150,13 +147,10 @@ defmodule ExFacto.Contract.Offer do
     version = Utils.get_protocol_version()
     contract_flags = Contract.default_contract_flags()
 
-    temp_contract_id = new_temp_contract_id()
-
-    %__MODULE__{
+    offer = %__MODULE__{
       version: version,
       contract_flags: contract_flags,
       chain_hash: chain_hash,
-      temp_contract_id: temp_contract_id,
       contract_info: contract_info,
       funding_pubkey: funding_pubkey,
       payout_script: payout_script,
@@ -168,13 +162,28 @@ defmodule ExFacto.Contract.Offer do
       refund_locktime: refund_locktime
       # TODO TLVs
     }
+
+    # set offer_id
+    %{offer | offer_id: calculate_offer_id(offer)}
+  end
+
+  def verify(o = %__MODULE__{}) do
+    calculate_offer_id(o) == o.offer_id &&
+      Announcement.verify(contract_info.oracle_info.announcement)
+  end
+
+  def calculate_offer_id(o = %__MODULE__{}) do
+    %{o | offer_id: <<>>}
+    |> serialize()
+    |> Utils.contractor_tagged_hash("offer/v0")
   end
 
   def serialize(o = %__MODULE__{}) do
+    # <>
     Messaging.ser(o.version, :u32) <>
       Messaging.ser(o.contract_flags, :u8) <>
       o.chain_hash <>
-      o.temp_contract_id <>
+      o.offer_id <>
       Contract.serialize(o.contract_info) <>
       Point.x_bytes(o.funding_pubkey) <>
       Utils.script_with_big_size(o.payout_script) <>
@@ -183,17 +192,17 @@ defmodule ExFacto.Contract.Offer do
       Utils.script_with_big_size(o.change_script) <>
       Messaging.ser(o.fee_rate, :u64) <>
       Messaging.ser(o.cet_locktime, :u32) <>
-      Messaging.ser(o.refund_locktime, :u32) <>
-      serialize_offer_tlvs(o.tlvs)
+      Messaging.ser(o.refund_locktime, :u32)
+
+    # serialize_offer_tlvs(o.tlvs)
   end
 
-  def base64(o = %__MODULE__{}), do: serialize(o) |> Base.encode64()
-
+  @spec parse(binary) :: t()
   def parse(msg) do
     {version, msg} = Messaging.par(msg, :u32)
     {contract_flags, msg} = Messaging.par(msg, :u8)
     {chain_hash, msg} = Messaging.par(msg, 32)
-    {temp_contract_id, msg} = Messaging.par(msg, 32)
+    {offer_id, msg} = Messaging.par(msg, 32)
     {contract_info, msg} = Contract.parse(msg)
     {funding_pubkey, msg} = Messaging.parse_point(msg)
     {payout_script, msg} = Messaging.par(msg, :script)
@@ -202,15 +211,15 @@ defmodule ExFacto.Contract.Offer do
     {change_script, msg} = Messaging.par(msg, :script)
     {fee_rate, msg} = Messaging.par(msg, :u64)
     {cet_locktime, msg} = Messaging.par(msg, :u32)
-    {refund_locktime, _msg} = Messaging.par(msg, :u32)
+    {refund_locktime, msg} = Messaging.par(msg, :u32)
     # {tlvs, _msg} = parse_offer_tlvs(msg)
     # TODO verify msg is blank
 
-    %__MODULE__{
+    offer = %__MODULE__{
       version: version,
       contract_flags: contract_flags,
       chain_hash: chain_hash,
-      temp_contract_id: temp_contract_id,
+      offer_id: offer_id,
       contract_info: contract_info,
       funding_pubkey: funding_pubkey,
       payout_script: payout_script,
@@ -219,16 +228,15 @@ defmodule ExFacto.Contract.Offer do
       change_script: change_script,
       fee_rate: fee_rate,
       cet_locktime: cet_locktime,
-      refund_locktime: refund_locktime,
+      refund_locktime: refund_locktime
       # tlvs: tlvs
     }
+
+    {offer, msg}
   end
 
   # unimplemented
-  def serialize_offer_tlvs(nil), do: <<>>
-
-  # TODO fix. should be sha256 of offer
-  def new_temp_contract_id(), do: <<0x00::little-size(256)>>
+  def serialize_offer_tlvs(_), do: <<>>
 end
 
 defmodule ExFacto.Contract.Accept do
@@ -236,13 +244,12 @@ defmodule ExFacto.Contract.Accept do
   alias Bitcoinex.Secp256k1.{Point, Signature}
   alias ExFacto.{Utils, Messaging}
 
-  # @accept_dlc_type 42780
-
   # BREAK with DLC Spec: add dummy_tapkey_tweak
   @type t :: %__MODULE__{
           version: non_neg_integer(),
           chain_hash: <<_::256>>,
-          temp_contract_id: String.t(),
+          contract_id: <<_::256>>,
+          offer_id: <<_::256>>,
           funding_pubkey: Point.t(),
           dummy_tapkey_tweak: non_neg_integer(),
           payout_script: Script.t(),
@@ -250,42 +257,39 @@ defmodule ExFacto.Contract.Accept do
           collateral_amount: non_neg_integer(),
           funding_inputs: list(Messaging.funding_input_info()),
           # TODO: Barrier Oracle info
-          funding_witnesses: list(Witness.t()),
           cet_adaptor_signatures: list(cet_adaptor_signature()),
-          refund_signature: Signature.t(),
-          # unused
-          negotiation_fields: list(),
-          # unused
-          tlvs: list()
+          refund_signature: Signature.t()
+          # negotiation_fields: list(),
+          # tlvs: list()
         }
 
   defstruct [
     :version,
     :chain_hash,
-    :temp_contract_id,
+    :contract_id,
+    :offer_id,
     :funding_pubkey,
     :dummy_tapkey_tweak,
     :payout_script,
     :change_script,
     :collateral_amount,
     :funding_inputs,
-    :funding_witnesses,
     :cet_adaptor_signatures,
-    :refund_signature,
-    :negotiation_fields,
-    :tlvs
+    :refund_signature
+    # :negotiation_fields,
+    # :tlvs
   ]
 
   def new(
         chain_hash,
-        temp_contract_id,
+        contract_id,
+        offer_id,
         funding_pubkey,
         dummy_tapkey_tweak,
         payout_script,
         change_script,
         collateral_amount,
         funding_inputs,
-        funding_witnesses,
         cet_adaptor_signatures,
         refund_signature
       ) do
@@ -294,14 +298,14 @@ defmodule ExFacto.Contract.Accept do
     %__MODULE__{
       version: version,
       chain_hash: chain_hash,
-      temp_contract_id: temp_contract_id,
+      contract_id: contract_id,
+      offer_id: offer_id,
       funding_pubkey: funding_pubkey,
       dummy_tapkey_tweak: dummy_tapkey_tweak,
       payout_script: payout_script,
       change_script: change_script,
       collateral_amount: collateral_amount,
       funding_inputs: funding_inputs,
-      funding_witnesses: funding_witnesses,
       cet_adaptor_signatures: cet_adaptor_signatures,
       refund_signature: refund_signature
       # TODO: negotiation_fields
@@ -310,58 +314,54 @@ defmodule ExFacto.Contract.Accept do
   end
 
   def serialize(a = %__MODULE__{}) do
+    # <>
     Messaging.ser(a.version, :u32) <>
       a.chain_hash <>
-      a.temp_contract_id <>
+      a.contract_id <>
+      a.offer_id <>
       Messaging.ser(a.collateral_amount, :u64) <>
       Messaging.ser(a.funding_pubkey, :pk) <>
       Messaging.ser(a.dummy_tapkey_tweak, :u256) <>
       Utils.script_with_big_size(a.payout_script) <>
       Messaging.serialize_funding_inputs(a.funding_inputs) <>
       Utils.script_with_big_size(a.change_script) <>
-      Messaging.serialize_funding_witnesses(a.funding_witnesses) <>
-      serialize_cet_adaptor_signatures(a.cet_adaptor_signatures) <>
-      Signature.serialize_signature(a.refund_signature) <>
-      Messaging.ser(a.dummy_tapkey_tweak, :u64) <>
-      serialize_negotiation_fields(a.negotiation_fields) <>
-      serialize_tlvs(a.tlvs)
-  end
+      Messaging.serialize_cet_adaptor_signatures(a.cet_adaptor_signatures) <>
+      Messaging.ser(a.refund_signature, :signature)
 
-  def base64(a = %__MODULE__{}), do: serialize(a) |> Base.encode64()
+    # Messaging.serialize_negotiation_fields(a.negotiation_fields) <>
+    # Messaging.serialize_tlvs(a.tlvs)
+  end
 
   def parse(msg) do
     {version, msg} = Messaging.par(msg, :u32)
     {chain_hash, msg} = Messaging.par(msg, 32)
-    {temp_contract_id, msg} = Messaging.par(msg, 32)
+    {contract_id, msg} = Messaging.par(msg, 32)
+    {offer_id, msg} = Messaging.par(msg, 32)
     {collateral_amount, msg} = Messaging.par(msg, :u64)
     {funding_pubkey, msg} = Messaging.par(msg, :pk)
     {dummy_tapkey_tweak, msg} = Messaging.par(msg, :u256)
     {payout_script, msg} = Messaging.par(msg, :script)
     {funding_inputs, msg} = Messaging.parse_funding_inputs(msg)
     {change_script, msg} = Messaging.par(msg, :script)
-    {funding_witnesses, msg} = Messaging.parse_funding_witnesses(msg)
-    {cet_adaptor_signatures, msg} = parse_cet_adaptor_signatures(msg)
-    {refund_signature, <<>>} = Messaging.parse_signature(msg)
+    {cet_adaptor_signatures, msg} = Messaging.parse_cet_adaptor_signatures(msg)
+    {refund_signature, msg} = Messaging.parse_signature(msg)
 
-    %__MODULE__{
+    accept = %__MODULE__{
       version: version,
       chain_hash: chain_hash,
-      temp_contract_id: temp_contract_id,
+      contract_id: contract_id,
+      offer_id: offer_id,
       funding_pubkey: funding_pubkey,
       dummy_tapkey_tweak: dummy_tapkey_tweak,
       payout_script: payout_script,
       change_script: change_script,
       collateral_amount: collateral_amount,
       funding_inputs: funding_inputs,
-      funding_witnesses: funding_witnesses,
       cet_adaptor_signatures: cet_adaptor_signatures,
       refund_signature: refund_signature
     }
-  end
 
-  @spec from_base64(String.t()) :: t()
-  def from_base64(msg) do
-    Base.decode64!(msg) |> parse()
+    {accept, msg}
   end
 
   # CET sigs must be ordered the same as the outcomes
@@ -373,38 +373,75 @@ defmodule ExFacto.Contract.Accept do
           was_negated: boolean()
         }
 
-  def new_adaptor_signature(sig, was_negated), do: %{adaptor_signature: sig, was_negated: was_negated}
-
-  def serialize_cet_adaptor_signatures(cet_adaptor_signatures) do
-    {ct, ser_sigs} =
-      Utils.serialize_with_count(cet_adaptor_signatures, &serialize_cet_adaptor_signature/1)
-
-    Utils.big_size(ct) <> ser_sigs
-  end
-
-  # BREAK WITH DLC SPEC to use Schnorr Adaptor Sigs
-  def serialize_cet_adaptor_signature(cas) do
-    # cas.txid <>
-      # Point.x_bytes(cas.pubkey) <>
-      Messaging.ser(cas.adaptor_signature, :signature) <>
-      Messaging.ser(cas.was_negated, :bool)
-  end
-
-  @spec parse_cet_adaptor_signatures(nonempty_binary) :: {list(cet_adaptor_signature()), binary}
-  def parse_cet_adaptor_signatures(msg) do
-    {cet_adaptor_sig_ct, msg} = Utils.get_counter(msg)
-    Messaging.parse_items(msg, cet_adaptor_sig_ct, [], &parse_cet_adaptor_signature/1)
-  end
-
-  def parse_cet_adaptor_signature(<<sig::binary-size(64), was_negated::binary-size(1), msg::binary>>) do
-    {:ok, signature} = Signature.parse_signature(sig)
-    {was_negated, _} = Messaging.par(was_negated, :bool)
-    {%{adaptor_signature: signature, was_negated: was_negated}, msg}
-  end
+  def new_adaptor_signature(sig, was_negated),
+    do: %{adaptor_signature: sig, was_negated: was_negated}
 
   # unimplemented
   def serialize_negotiation_fields(_), do: <<>>
   def serialize_tlvs(_), do: <<>>
+end
 
+defmodule ExFacto.Contract.Acknowledge do
+  alias ExFacto.Messaging
+  alias Bitcoinex.Transaction.{Witness}
+  alias Bitcoinex.Secp256k1.{Signature}
 
+  @type t :: %__MODULE__{
+          contract_id: <<_::256>>,
+          # TODO: decide to send witness or full tx
+          funding_witnesses: list(Witness.t()),
+          cet_adaptor_signatures: list(%{adaptor_signature: Signature.t(), was_negated: boolean}),
+          refund_signature: Signature.t()
+        }
+
+  defstruct [
+    :contract_id,
+    :funding_witnesses,
+    :cet_adaptor_signatures,
+    :refund_signature
+  ]
+
+  @enforce_keys [
+    :contract_id
+  ]
+
+  @spec new(
+          String.t(),
+          list(Witness.t()),
+          list(%{adaptor_signature: Signature.t(), was_negated: boolean}),
+          Signature.t()
+        ) :: t()
+  def new(contract_id, funding_witnesses, cet_sigs, refund_sig) do
+    %__MODULE__{
+      contract_id: contract_id,
+      funding_witnesses: funding_witnesses,
+      cet_adaptor_signatures: cet_sigs,
+      refund_signature: refund_sig
+    }
+  end
+
+  @spec serialize(t()) :: binary
+  def serialize(ack = %__MODULE__{}) do
+    ack.contract_id <>
+      Messaging.serialize_funding_witnesses(ack.funding_witnesses) <>
+      Messaging.serialize_cet_adaptor_signatures(ack.cet_adaptor_signatures) <>
+      Messaging.ser(ack.refund_signature, :signature)
+  end
+
+  @spec parse(binary) :: {t(), binary}
+  def parse(msg) do
+    {contract_id, msg} = Messaging.par(msg, 32)
+    {funding_witnesses, msg} = Messaging.parse_funding_witnesses(msg)
+    {cet_adaptor_sigs, msg} = Messaging.parse_cet_adaptor_signatures(msg)
+    {refund_sig, msg} = Messaging.par(msg, :signature)
+
+    ack = %__MODULE__{
+      contract_id: contract_id,
+      funding_witnesses: funding_witnesses,
+      cet_adaptor_signatures: cet_adaptor_sigs,
+      refund_signature: refund_sig
+    }
+
+    {ack, msg}
+  end
 end

@@ -71,14 +71,17 @@ defmodule ExFacto.Event do
     {ct, ser_outcomes} =
       Utils.serialize_with_count(descriptor.outcomes, fn o -> Messaging.ser(o, :utf8) end)
 
-      # BUG is this u16 or u32? see spec
+    # BUG is this u16 or u32? see spec
     Messaging.ser(ct, :u32) <> ser_outcomes
   end
 
   def parse_event_descriptor(msg) do
     # BUG is this u16 or u32? see spec
     {outcome_ct, msg} = Messaging.par(msg, :u32)
-    {outcomes, msg} = Messaging.parse_items(msg, outcome_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
+
+    {outcomes, msg} =
+      Messaging.parse_items(msg, outcome_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
+
     {%{outcomes: outcomes}, msg}
   end
 
@@ -92,14 +95,14 @@ defmodule ExFacto.Event do
     nonce_sec = new_private_key_func.()
     nonce_point = PrivateKey.to_point(nonce_sec)
 
-        event = %__MODULE__{
-          id: Utils.new_event_id(),
-          nonce_points: [nonce_point],
-          descriptor: descriptor,
-          maturity_epoch: maturity_epoch
-        }
+    event = %__MODULE__{
+      id: Utils.new_event_id(),
+      nonce_points: [nonce_point],
+      descriptor: descriptor,
+      maturity_epoch: maturity_epoch
+    }
 
-        {nonce_sec, event}
+    {nonce_sec, event}
   end
 
   # OLD

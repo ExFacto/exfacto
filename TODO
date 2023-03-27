@@ -13,3 +13,21 @@ figure out how to sort signatures for funding input spend
 figure out how to sort Witnesses for funding tx
 
 standardize use of new_randomness functions so that we can plug in other entropy sources
+
+Do we need to have a contract ID or can Offer ID be enough? 
+- what about if an accept is never ack'd and another is? Would this confuse coordinators or offerers? 
+
+Switch order & Contract ID to 32bytes. Store as hex string or bytes? 
+
+write verification into
+- Create Offer
+    - verify Announcement
+- Create Accept
+    - verify Announcement
+    - verify Offer
+- Ack Accept
+    - Verify Accept & all signatures
+- Finalize Contract (handle Ack)
+    - Verify CET Signatures & funding signatures
+
+    DO we need to verify counterparties' scripts? no, as long as they parse to a script, should be good, we dont care if they're unspendable

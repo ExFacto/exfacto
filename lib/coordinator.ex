@@ -33,20 +33,20 @@
 #   def handle_maker(
 #         oracle_announcement,
 #         maker_outcome,
-#         fund_fee,
+#         funding_fee,
 #         cet_fee,
-#         {prev_outpoint, prev_address, prev_amount, fund_pubkey, fund_amount, dest_address}
+#         {prev_outpoint, prev_address, prev_amount, funding_pubkey, funding_amount, dest_address}
 #       ) do
 #     # TODO maker_outcome must be an announcement outcome
 #     {prev_txid, prev_vout, prev_scriptpubkey, prev_amount} =
 #       handle_input_coin_info(prev_outpoint, prev_address, prev_amount)
 
-#     {fund_pk, fund_amount} = handle_funding_info(fund_pubkey, fund_amount)
+#     {funding_pk, funding_amount} = handle_funding_info(funding_pubkey, funding_amount)
 #     ## TODO: dest_address
 #     # dest_script = handle_settlement_info(nil)
 
-#     change_amount = prev_amount - fund_amount - fund_fee
-#     winner_amount = fund_amount - cet_fee
+#     change_amount = prev_amount - funding_amount - funding_fee
+#     winner_amount = funding_amount - cet_fee
 #     loser_amount = 0
 #     true
 #     # send bet summary back to maker
@@ -58,12 +58,12 @@
 #   def handle_taker(
 #         oracle_announcement,
 #         taker_outcome,
-#         {prev_outpoint, prev_address, prev_amount, fund_pubkey, fund_amount, dest_address}
+#         {prev_outpoint, prev_address, prev_amount, funding_pubkey, funding_amount, dest_address}
 #       ) do
 #     {prev_txid, prev_vout, prev_scriptpubkey, prev_amount} =
 #       handle_input_coin_info(prev_outpoint, prev_address, prev_amount)
 
-#     {fund_pk, fund_amount} = handle_funding_info(fund_pubkey, fund_amount)
+#     {funding_pk, funding_amount} = handle_funding_info(funding_pubkey, funding_amount)
 #     # dest_script = handle_settlement_info(dest_address)
 #     true
 #     # Notify both maker & taker with bet summary & Funding TX, r, & CETs
@@ -100,9 +100,9 @@
 #     dest_script
 #   end
 
-#   def send_bet_summary(fund_amount, winner_amount, event, dest_scripts) do
+#   def send_bet_summary(funding_amount, winner_amount, event, dest_scripts) do
 #     %{
-#       fund_amount: fund_amount,
+#       funding_amount: funding_amount,
 #       winner_gets: winner_amount,
 #       outcomes: event.outcomes,
 #       dest_scripts: dest_scripts
@@ -114,8 +114,8 @@
 #   def send_funding_tx_info(
 #         prev_outputs,
 #         outpoints,
-#         alice_fund_pk,
-#         bob_fund_pk,
+#         alice_funding_pk,
+#         bob_funding_pk,
 #         fund_amount,
 #         change_outputs
 #       ) do

@@ -8,15 +8,17 @@ defmodule ExFacto.Builder do
   @default_sequence 0xFFFFFFFE
   @default_locktime 0
 
-  def new_output(value, scriptpubkey), do: %Out{value: value, script_pub_key: Script.to_hex(scriptpubkey)}
+  def new_output(value, scriptpubkey),
+    do: %Out{value: value, script_pub_key: Script.to_hex(scriptpubkey)}
 
-  def build_funding_tx(inputs, funding_output, change_outputs) do
+  def build_funding_tx(inputs, funding_output, change_outputs) when is_list(inputs) do
     # sort outputs and find funding vout
     outputs = Out.lexicographical_sort_outputs([funding_output | change_outputs])
     funding_vout = Enum.find_index(outputs, fn output -> output == funding_output end)
     # build and sort inputs
     inputs =
-      Enum.map(inputs, &funding_input_to_txin/1)
+      inputs
+      |> Enum.map(&funding_input_to_txin/1)
       |> In.lexicographical_sort_inputs()
 
     funding_tx = %Transaction{
@@ -28,7 +30,7 @@ defmodule ExFacto.Builder do
 
     funding_txid = Transaction.transaction_id(funding_tx)
 
-    # fund_outpoint used as single input to CETs & Refund tx
+    # funding_outpoint used as single input to CETs & Refund tx
     funding_outpoint = build_funding_outpoint(funding_txid, funding_vout)
 
     # TODO: also build and return psbt
@@ -36,43 +38,69 @@ defmodule ExFacto.Builder do
   end
 
   def funding_input_to_txin(input_info) do
+    redeem_script =
+      if input_info.redeem_script == nil do
+        ""
+      else
+        input_info.redeem_script
+      end
+
     %In{
       prev_txid: Transaction.transaction_id(input_info.prev_tx),
       prev_vout: input_info.prev_vout,
-      script_sig: input_info.redeem_script,
+      script_sig: redeem_script,
       sequence_no: input_info.sequence
     }
   end
 
   # also verifies that the keyspend path is unspendable
   def build_funding_output(amount, pubkeys, dummy_tapkey_tweak) do
-    fund_script = Script.create_tapscript_multisig(length(pubkeys), pubkeys)
+    funding_script = Script.create_tapscript_multisig(length(pubkeys), pubkeys)
 
-    fund_leaf = Taproot.TapLeaf.new(Taproot.bip342_leaf_version(), fund_script)
+    funding_leaf = Taproot.TapLeaf.new(Taproot.bip342_leaf_version(), funding_script)
 
     # P2TR for funding addr will have no internal key. Only way to spend is to satisfy the 2-of-2
     # TODO: when MuSig is implemented, the KeySpend route can act as 2-of-2 instead, and is cheaper and way more private
-    {:ok, fund_scriptpubkey, _r} = Script.create_p2tr_script_only(fund_leaf, dummy_tapkey_tweak)
+    {:ok, funding_scriptpubkey, _r} =
+      Script.create_p2tr_script_only(funding_leaf, dummy_tapkey_tweak)
 
     funding_output = %Out{
       value: amount,
-      script_pub_key: Script.to_hex(fund_scriptpubkey)
+      script_pub_key: Script.to_hex(funding_scriptpubkey)
     }
 
-    valid = Script.validate_unsolvable_internal_key(fund_scriptpubkey, fund_leaf, dummy_tapkey_tweak)
-    if !valid, do:
-      raise "invalid internal key, keypath spend not provably unspendable. Foul play suspected."
+    valid =
+      Script.validate_unsolvable_internal_key(
+        funding_scriptpubkey,
+        funding_leaf,
+        dummy_tapkey_tweak
+      )
+
+    if !valid,
+      do:
+        raise(
+          "invalid internal key, keypath spend not provably unspendable. Foul play suspected."
+        )
 
     # nonce r is returned to allow others to verify that the keyspend path is unsolvable
-    {funding_output, fund_leaf, dummy_tapkey_tweak}
+    {funding_output, funding_leaf, dummy_tapkey_tweak}
   end
 
-  def build_refund_tx(fund_input, outputs, locktime) do
+  def build_refund_tx(funding_input, total_collateral, offer_collateral_amount, accept_payout_script, offer_payout_script, locktime) do
+    accept_collateral = total_collateral - offer_collateral_amount
+    accept_refund_output = Builder.new_output(accept_collateral, accept_payout_script)
+    offer_refund_output = Builder.new_output(offer_collateral_amount, offer_payout_script)
+
+    # sort outputs
+    outputs =
+      [accept_refund_output, offer_refund_output]
+      |> Out.lexicographical_sort_outputs()
+
     %Transaction{
       version: @tx_version,
-      inputs: [fund_input],
+      inputs: [funding_input],
       outputs: outputs,
-      witnesses: [],
+      witnesses: nil,
       lock_time: locktime
     }
 
@@ -80,16 +108,30 @@ defmodule ExFacto.Builder do
   end
 
   # returns list({outcome, cet_tx})
-  def build_all_cets(fund_input, total_collateral, offer_script, accept_script, contract_descriptor, locktime) do
+  def build_all_cets(
+        funding_input,
+        total_collateral,
+        offer_script,
+        accept_script,
+        contract_descriptor,
+        locktime
+      ) do
     build_cet = fn outcome_payout ->
-      build_cet_tx(fund_input, total_collateral, offer_script, accept_script, outcome_payout, locktime)
+      build_cet_tx(
+        funding_input,
+        total_collateral,
+        offer_script,
+        accept_script,
+        outcome_payout,
+        locktime
+      )
     end
 
     Enum.map(contract_descriptor, build_cet)
   end
 
   def build_cet_tx(
-        fund_input,
+        funding_input,
         total_collateral,
         offer_script,
         accept_script,
@@ -98,7 +140,7 @@ defmodule ExFacto.Builder do
       ) do
     offer_output = new_output(offer_payout, offer_script)
 
-    # fee is the diff of fund_input.prev_amount - total_collateral
+    # fee is the diff of funding_input.prev_amount - total_collateral
     # and is handled when creating funding tx
     accept_payout = total_collateral - offer_payout
     accept_output = new_output(accept_payout, accept_script)
@@ -111,7 +153,7 @@ defmodule ExFacto.Builder do
     {outcome,
      %Transaction{
        version: @tx_version,
-       inputs: [fund_input],
+       inputs: [funding_input],
        outputs: outputs,
        lock_time: locktime
      }}
@@ -126,12 +168,26 @@ defmodule ExFacto.Builder do
     }
   end
 
-  def build_funding_outpoint(fund_txid, fund_vout),
-    do: build_outpoint(fund_txid, fund_vout, @default_sequence)
+  def build_funding_outpoint(funding_txid, funding_vout),
+    do: build_outpoint(funding_txid, funding_vout, @default_sequence)
 
-  # TODO FIX ME
+  def funding_control_block(funding_pubkey, funding_leaf) do
+    # funding output script tree only has 1 leaf, so index must be 0
+    control_block = Taproot.build_control_block(funding_pubkey, funding_leaf, 0)
+    control_block_hex = control_block |> Base.encode16(case: :lower)
+
+    funding_script_hex = Script.to_hex(funding_leaf.script)
+
+    {funding_script_hex, control_block_hex}
+  end
+
+  # list of funding_input_infos
+  @spec sum_input_amounts(list(any)) :: non_neg_integer()
   def sum_input_amounts(funding_input_infos) do
-    Enum.reduce(funding_input_infos, 0, fn info, sum -> sum + info.amount end)
+    Enum.reduce(funding_input_infos, 0, fn info, sum ->
+      prev_out = Enum.at(info.prev_tx.outputs, info.prev_vout)
+      sum + prev_out.value
+    end)
   end
 
   # TX Size & Fee calculations
@@ -139,27 +195,44 @@ defmodule ExFacto.Builder do
   @wu_per_vbyte 4
   @wu_per_vbyte_f 4.0
 
-  # p2wpkh witness: 108 bytes (non-Low R)
-  # - number_of_witness_elements: 1 byte
-  # - sig_length: 1 byte
-  # - sig: 72 bytes
-  # - pub_key_length: 1 byte
-  # - pub_key: 33 bytes
+  @doc """
+  p2wpkh witness: 108 bytes (non-Low R)
+  - number_of_witness_elements: 1 byte
+  - sig_length: 1 byte
+  - sig: 72 bytes
+  - pub_key_length: 1 byte
+  - pub_key: 33 bytes
+  """
+  @spec max_witness_len_p2wpkh :: 108
   def max_witness_len_p2wpkh(), do: 108
-  # p2tr-keyspend: 64 bytes
-  # - sig: 64 bytes
+
+  @doc """
+  p2tr-keyspend: 64 bytes
+  - sig: 64 bytes
+  """
+  @spec max_witness_len_p2tr_keyspend :: 64
   def max_witness_len_p2tr_keyspend(), do: 64
   # p2tr-scriptspend: ???
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Transactions.md#fees
+  @spec tx_version_wu :: 16
   def tx_version_wu(), do: 4 * @wu_per_vbyte
   # Assumptions for any reasonably small tx. Maybe update
+  @spec tx_in_ct_wu :: 4
   def tx_in_ct_wu(), do: 1 * @wu_per_vbyte
+  @spec tx_out_ct_wu() :: 4
   def tx_out_ct_wu(), do: 1 * @wu_per_vbyte
+  @spec tx_wit_header_wu :: 2
   def tx_wit_header_wu(), do: 2
+  @spec tx_locktime_wu :: 16
   def tx_locktime_wu(), do: 4 * @wu_per_vbyte
 
-  # Inputs
-  # 32 byte txid + 4 byte vout + 4 byte sequence + 1 + script_sig
+  @doc """
+  Inputs
+  - 32 byte txid
+  - 4 byte vout
+  - 4 byte sequence
+  - 1 + len(script_sig)
+  """
   @spec txin_outpoint_wu :: 144
   def txin_outpoint_wu(), do: 36 * @wu_per_vbyte
   @spec txin_sequence_wu :: 16
@@ -184,17 +257,26 @@ defmodule ExFacto.Builder do
 
   def calculate_fee(tx_vbytes, fee_rate), do: tx_vbytes * fee_rate
 
-  def calculate_funding_tx_outputs(offer, accept_funding_inputs, accept_payout_script, accept_change_script) do
+  def calculate_funding_tx_outputs(
+        offer,
+        accept_funding_inputs,
+        accept_payout_script,
+        accept_change_script
+      ) do
     total_collateral = offer.contract_info.total_collateral
     accept_collateral = total_collateral - offer.collateral_amount
 
-    accept_funding_tx_vbytes = calculate_singleparty_funding_tx_vbytes(accept_funding_inputs, accept_change_script)
+    accept_funding_tx_vbytes =
+      calculate_singleparty_funding_tx_vbytes(accept_funding_inputs, accept_change_script)
+
     accept_funding_fee = calculate_fee(accept_funding_tx_vbytes, offer.fee_rate)
 
     accept_settlement_tx_vbytes = calculate_singleparty_cet_tx_vbytes([accept_payout_script])
     accept_settlement_fee = calculate_fee(accept_settlement_tx_vbytes, offer.fee_rate)
 
-    offer_funding_tx_vbytes = calculate_singleparty_funding_tx_vbytes(offer.funding_inputs, offer.change_script)
+    offer_funding_tx_vbytes =
+      calculate_singleparty_funding_tx_vbytes(offer.funding_inputs, offer.change_script)
+
     offer_funding_fee = calculate_fee(offer_funding_tx_vbytes, offer.fee_rate)
 
     offer_settlement_tx_vbytes = calculate_singleparty_cet_tx_vbytes([offer.payout_script])
@@ -206,16 +288,21 @@ defmodule ExFacto.Builder do
     accept_input_sats = sum_input_amounts(accept_funding_inputs)
     offer_input_sats = sum_input_amounts(offer.funding_inputs)
 
-    accept_change_amount = accept_input_sats - accept_collateral - accept_funding_fee - accept_settlement_fee
-    offer_change_amount = offer_input_sats - offer.collateral_amount - offer_funding_fee - offer_settlement_fee
+    accept_change_amount =
+      accept_input_sats - accept_collateral - accept_funding_fee - accept_settlement_fee
+
+    offer_change_amount =
+      offer_input_sats - offer.collateral_amount - offer_funding_fee - offer_settlement_fee
 
     {funding_amount, accept_change_amount, offer_change_amount}
   end
 
   def calculate_singleparty_funding_tx_vbytes(funding_input_infos, change_script) do
     # fixed cost is shared equally
-    fixed_wu = tx_fixed_wu() # 42
-    fixed_wu = Float.ceil(fixed_wu / 2.0) # 21
+    # 42
+    fixed_wu = tx_fixed_wu()
+    # 21
+    fixed_wu = Float.ceil(fixed_wu / 2.0)
 
     {inputs_wu, witness_wu} = calculate_inputs_wu(funding_input_infos)
 
@@ -244,9 +331,11 @@ defmodule ExFacto.Builder do
     # 1 funding input
     # TODO(BTCRPC): lookup prev_input or get this info from user
     {inputs_wu, witness_wu} =
-      calculate_inputs_wu([%{
-        max_witness_len: calculate_2_of_2_tapscript_spend_wu()
-      }])
+      calculate_inputs_wu([
+        %{
+          max_witness_len: calculate_2_of_2_tapscript_spend_wu()
+        }
+      ])
 
     # funding input cost is shared equally
     inputs_wu = half(inputs_wu)
@@ -290,14 +379,18 @@ defmodule ExFacto.Builder do
   def calculate_inputs_wu(inputs) do
     # witness txs have at least 2 witness bytes for header
     Enum.reduce(inputs, {0, 0}, fn input_info, {input_wu, witness_wu} ->
-      {input_wu +
-        txin_outpoint_wu() + # 36
-        txin_sequence_wu() + # 4
-        script_sig_wu(input_info), # 1 + script_sig len
-
-       witness_wu +
-       txwit_items_ct_wu() + # 1
-       max_witness_wu(input_info)
+      {
+        # 36
+        # 4
+        # 1 + script_sig len
+        input_wu +
+          txin_outpoint_wu() +
+          txin_sequence_wu() +
+          script_sig_wu(input_info),
+        # 1
+        witness_wu +
+          txwit_items_ct_wu() +
+          max_witness_wu(input_info)
       }
     end)
   end
@@ -306,6 +399,7 @@ defmodule ExFacto.Builder do
   @spec script_sig_wu(%{:redeem_script => Script.t() | nil}) :: non_neg_integer
   def script_sig_wu(input) do
     redeem_script = Map.get(input, :redeem_script, nil)
+
     if redeem_script == nil || redeem_script == "" do
       txin_empty_scriptsig_wu()
     else
@@ -323,9 +417,11 @@ defmodule ExFacto.Builder do
 
   def calculate_outputs_wu(scriptpubkeys) do
     Enum.reduce(scriptpubkeys, 0, fn script, wu ->
+      # 8
+      # 1 + len(script)
       wu +
-      txout_value_wu() + # 8
-      (byte_size(Utils.script_with_big_size(script)) * @wu_per_vbyte) # 1 + len(script)
+        txout_value_wu() +
+        byte_size(Utils.script_with_big_size(script)) * @wu_per_vbyte
     end)
   end
 
@@ -349,31 +445,32 @@ defmodule ExFacto.Builder do
     Enum.filter(outputs, fn %{value: value} -> value > @dust_limit end)
   end
 
-  def add_signatures_to_cet(cet_tx, pk_sigs, funding_tapkey, fund_leaf) do
+  def add_signatures_to_cet(cet_tx, pk_sigs, funding_tapkey, funding_leaf) do
     sorted_signatures =
       sort_signatures_by_pubkey(pk_sigs)
       |> Enum.map(&Signature.to_hex/1)
 
-      build_cet_witness(cet_tx, sorted_signatures, funding_tapkey, fund_leaf)
+    build_cet_witness(cet_tx, sorted_signatures, funding_tapkey, funding_leaf)
   end
 
-  def build_cet_witness(cet_tx, sorted_signatures, funding_tapkey, fund_leaf) do
+  def build_cet_witness(cet_tx, sorted_signatures, funding_tapkey, funding_leaf) do
     control_block =
-      Taproot.build_control_block(funding_tapkey, fund_leaf, 0)
+      Taproot.build_control_block(funding_tapkey, funding_leaf, 0)
       |> Base.encode16(case: :lower)
-    script = Script.to_hex(fund_leaf.script)
+
+    script = Script.to_hex(funding_leaf.script)
 
     cet_tx = %Transaction{
-      cet_tx | witnesses: [
-        %Transaction.Witness{
-          txinwitness: sorted_signatures ++ [script, control_block]
-        }
-      ]
+      cet_tx
+      | witnesses: [
+          %Transaction.Witness{
+            txinwitness: sorted_signatures ++ [script, control_block]
+          }
+        ]
     }
 
     cet_tx
   end
-
 
   @spec sort_signatures_by_pubkey(list({Point.t(), Signature.t()})) :: [Signature.t()]
   def sort_signatures_by_pubkey(pk_sigs) do
@@ -384,9 +481,9 @@ defmodule ExFacto.Builder do
       pk_sigs_map
       |> Map.keys()
       |> Script.lexicographical_sort_pubkeys()
+
     sorted_sigs = Enum.map(sorted_pubkeys, fn pk -> Map.fetch!(pk_sigs_map, pk) end)
     # because Script is evaluated as stack, must reverse signatures order
     Enum.reverse(sorted_sigs)
   end
-
 end

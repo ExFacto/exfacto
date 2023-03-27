@@ -1,23 +1,22 @@
 defmodule ExFacto.Oracle do
   alias ExFacto.Oracle.{Announcement, Attestation}
-  alias ExFacto.Utils
-  alias ExFacto.Event
-  alias Bitcoinex.Secp256k1.{Schnorr, PrivateKey}
+  alias ExFacto.{Event, Utils, Messaging}
+  alias Bitcoinex.Secp256k1.{Schnorr, Signature, PrivateKey}
 
   @type t :: %__MODULE__{
           sk: PrivateKey.t(),
           pk: Point.t()
         }
 
-  @enforce_keys [:sk]
+  @enforce_keys [:sk, :pk]
 
   defstruct [
     :sk,
     :pk
   ]
 
-  def new() do
-    sk = Utils.new_private_key()
+  @spec new(PrivateKey.t()) :: t()
+  def new(sk = %PrivateKey{}) do
     pk = PrivateKey.to_point(sk)
 
     %__MODULE__{
@@ -26,31 +25,46 @@ defmodule ExFacto.Oracle do
     }
   end
 
+  # currently unused until there are multiple types or fields.
   @type oracle_info :: %{
           announcement: Announcement.t()
         }
 
-  def serialize_oracle_info(o), do: Announcement.serialize(o)
+  @spec serialize_oracle_info(oracle_info()) :: binary
+  def serialize_oracle_info(o), do: Announcement.serialize(o.announcement)
 
-  def parse_oracle_info(msg), do: Announcement.parse(msg)
+  @spec parse_oracle_info(binary) :: {oracle_info(), binary}
+  def parse_oracle_info(msg) do
+    {announcement, msg} = Announcement.parse(msg)
+
+    oracle_info = %{
+      announcement: announcement
+    }
+
+    {oracle_info, msg}
+  end
 
   @doc """
-    sign_event returns an oracle_announcement
+    sign_event returns an announcement
   """
   def sign_event(o = %__MODULE__{}, event) do
+    # {oracle, index} = increment_next_index(o)
     sighash = Announcement.sighash(event)
     aux = Utils.new_rand_int()
     {:ok, sig} = Schnorr.sign(o.sk, sighash, aux)
 
-    Announcement.new(sig, o.pk, event)
+    %{announcement: Announcement.new(sig, o.pk, event)}
   end
 
   # a single_oracle_info is just a wrapped oracle_announcement
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#single_oracle_info
-  def new_single_oracle_info(o = %__MODULE__{}, event) do
-    sign_event(o, event)
-  end
-  def sign_outcome(outcome, sk) do
+  @spec new_single_oracle_info(t(), Event.t()) :: oracle_info()
+  def new_single_oracle_info(o = %__MODULE__{}, event), do: sign_event(o, event)
+
+  @spec sign_outcome(PrivateKey.t() | t(), binary) :: {:error, String.t()} | {:ok, Signature.t()}
+  def sign_outcome(%__MODULE__{sk: sk}, outcome), do: sign_outcome(sk, outcome)
+
+  def sign_outcome(sk = %PrivateKey{}, outcome) do
     aux = Utils.new_rand_int()
     sighash = Attestation.sighash(outcome) |> :binary.decode_unsigned()
     Schnorr.sign(sk, sighash, aux)
@@ -62,7 +76,7 @@ defmodule ExFacto.Oracle.Announcement do
     an announcement is simply an Event signed by an Oracle
   """
   alias Bitcoinex.Secp256k1.{Signature, Point, Schnorr}
-  alias ExFacto.{Event, Utils}
+  alias ExFacto.{Event, Utils, Messaging}
 
   @type t :: %__MODULE__{
           signature: Signature.t(),
@@ -76,6 +90,7 @@ defmodule ExFacto.Oracle.Announcement do
     :event
   ]
 
+  @spec new(Signature.t(), Point.t(), Event.t()) :: t()
   def new(sig = %Signature{}, public_key = %Point{}, event = %Event{}) do
     %__MODULE__{
       signature: sig,
@@ -84,32 +99,36 @@ defmodule ExFacto.Oracle.Announcement do
     }
   end
 
+  @spec verify(t()) :: boolean | {:error, String.t()}
   def verify(a = %__MODULE__{}) do
     sighash = sighash(a.event)
     Schnorr.verify_signature(a.public_key, sighash, a.signature)
   end
 
+  @spec serialize(t()) :: binary
   def serialize(a) do
-    Signature.serialize_signature(a.signature) <>
-      Point.x_bytes(a.public_key) <>
+    Messaging.ser(a.signature, :signature) <>
+      Messaging.ser(a.public_key, :pk) <>
       Event.serialize(a.event)
   end
 
-    # used for signing events (structs)
-    def sighash(event) do
-      event
-      |> Event.serialize()
-      |> Utils.oracle_tagged_hash("announcement/v0")
-    end
+  # used for signing events (structs)
+  @spec sighash(Event.t()) :: non_neg_integer()
+  def sighash(event) do
+    event
+    |> Event.serialize()
+    |> Utils.oracle_tagged_hash("announcement/v0")
+  end
 
-  def parse(<<sig::binary-size(64), pk::binary-size(32), event::binary>>) do
-    {:ok, signature} = Signature.parse_signature(sig)
-    {:ok, point} = Point.lift_x(pk)
-    {event, rest} = Event.parse(event)
+  @spec parse(binary) :: {t(), binary}
+  def parse(msg) do
+    {signature, msg} = Messaging.par(msg, :signature)
+    {point, msg} = Messaging.par(msg, :pk)
+    {event, msg} = Event.parse(msg)
 
     announcement = new(signature, point, event)
 
-    {announcement, rest}
+    {announcement, msg}
   end
 end
 
@@ -121,6 +140,7 @@ defmodule ExFacto.Oracle.Attestation do
   @type t :: %__MODULE__{
           event_id: String.t(),
           public_key: Point.t(),
+          # currently only one of each per attestation
           signatures: list(Signature.t()),
           outcomes: list(String.t())
         }
@@ -132,6 +152,10 @@ defmodule ExFacto.Oracle.Attestation do
     :outcomes
   ]
 
+  @doc """
+    new creates a new Attestation
+  """
+  @spec new(String.t(), Point.t(), list(Signature.t()), list(String.t())) :: Attestation.t()
   def new(event_id, public_key = %Point{}, signatures, outcomes)
       when length(signatures) == length(outcomes) do
     %__MODULE__{
@@ -143,30 +167,36 @@ defmodule ExFacto.Oracle.Attestation do
   end
 
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#oracle_attestation
-  # @oracle_attestation_type 55400
-  def serialize(event_id, pubkey, signatures, outcomes) do
-    {sig_ct, ser_sigs} = Utils.serialize_with_count(signatures, &Signature.serialize_signature/1)
-    # ensure same number of sigs as outcomes
-    {^sig_ct, ser_outcomes} = Utils.serialize_with_count(outcomes, fn o -> Messaging.ser(o, :utf8) end)
+  @spec serialize(t()) :: binary
+  def serialize(a = %__MODULE__{}) do
+    {sig_ct, ser_sigs} =
+      Utils.serialize_with_count(a.signatures, fn sig -> Messaging.ser(sig, :signature) end)
 
-    Messaging.ser(event_id, :utf8) <>
-      Point.x_bytes(pubkey) <>
+    # ensure same number of sigs as outcomes
+    {^sig_ct, ser_outcomes} =
+      Utils.serialize_with_count(a.outcomes, fn o -> Messaging.ser(o, :utf8) end)
+
+    Messaging.ser(a.event_id, :utf8) <>
+      Messaging.ser(a.public_key, :pk) <>
       Messaging.ser(sig_ct, :u16) <>
       ser_sigs <>
       ser_outcomes
   end
 
+  @spec parse(nonempty_binary) :: {t(), binary}
   def parse(msg) do
-    {event_id, msg} = Utils.parse_compact_size_value(msg)
-    {pk, msg} = Messaging.par(msg, 32)
-    {:ok, pubkey} = Point.lift_x(pk)
+    {event_id, msg} = Messaging.par(msg, :utf8)
+    {pubkey, msg} = Messaging.par(msg, :pk)
     {sig_ct, msg} = Utils.get_counter(msg)
     {sigs, msg} = Messaging.parse_items(msg, sig_ct, [], &Messaging.parse_signature/1)
-    {outcomes, msg} = Messaging.parse_items(msg, sig_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
+
+    {outcomes, msg} =
+      Messaging.parse_items(msg, sig_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
+
     attestation = new(event_id, pubkey, sigs, outcomes)
     {attestation, msg}
   end
 
-  def sighash(outcome), do: Utils.oracle_tagged_hash(outcome, "attestation/v0") |> :binary.encode_unsigned()
-
+  def sighash(outcome),
+    do: Utils.oracle_tagged_hash(outcome, "attestation/v0") |> :binary.encode_unsigned()
 end

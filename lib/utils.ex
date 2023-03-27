@@ -65,13 +65,15 @@ defmodule ExFacto.Utils do
     end
   end
 
-  def parse_compact_size_value(key_value) do
-    {len, key_value} = get_counter(key_value)
-    <<value::binary-size(len), remaining::binary>> = key_value
+  def parse_compact_size_value(msg) do
+    {len, msg} = get_counter(msg)
+    <<value::binary-size(len), remaining::binary>> = msg
     {value, remaining}
   end
 
   @spec with_big_size(binary) :: binary
+  def with_big_size(nil), do: <<0>>
+
   def with_big_size(data) do
     data
     |> byte_size()
@@ -80,6 +82,7 @@ defmodule ExFacto.Utils do
   end
 
   def script_with_big_size(nil), do: <<0x00>>
+
   def script_with_big_size(script = %Script{}) do
     script
     |> Script.serialize_script()
@@ -95,5 +98,9 @@ defmodule ExFacto.Utils do
 
   def oracle_tagged_hash(msg, tag) do
     Utils.tagged_hash("DLC/oracle/#{tag}", msg) |> :binary.decode_unsigned()
+  end
+
+  def contractor_tagged_hash(msg, tag) do
+    Utils.tagged_hash("DLC/contractor/#{tag}", msg)
   end
 end
