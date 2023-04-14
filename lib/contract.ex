@@ -28,6 +28,25 @@ defmodule ExFacto.Contract do
     }
   end
 
+  def verify(c = %__MODULE__{}) do
+    with {_, true} <- {:verify_oracle_info, Oracle.verify_oracle_info(c.oracle_info)},
+         {_, true} <-
+           {:verify_outcomes,
+            verify_contract_outcomes_match_event_outcomes(c.descriptor, c.oracle_info.event)} do
+      true
+    else
+      {:verify_oracle_info, _} -> {:error, "failed to verify oracle info"}
+      {:verify_outcomes, _} -> {:error, "failed to verify contract outcomes match event outcomes"}
+    end
+  end
+
+  defp verify_contract_outcomes_match_event_outcomes(descriptor, event) do
+    Enum.zip(descriptor, event.outcomes)
+    |> Enum.all?(fn {{descriptor_outcome, _payout}, event_outcome} ->
+      descriptor_outcome == event_outcome
+    end)
+  end
+
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#single_contract_info
   def serialize(c) do
     Messaging.ser(c.total_collateral, :u64) <>
@@ -67,6 +86,10 @@ defmodule ExFacto.Contract do
     {outcome, msg} = Messaging.par(msg, :utf8)
     {payout, msg} = Messaging.par(msg, :u64)
     {{outcome, payout}, msg}
+  end
+
+  def get_announcement(c = %__MODULE__{}) do
+    c.oracle_info.announcement
   end
 
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#numeric_outcome_contract_descriptor
@@ -169,7 +192,11 @@ defmodule ExFacto.Contract.Offer do
 
   def verify(o = %__MODULE__{}) do
     calculate_offer_id(o) == o.offer_id &&
-      Announcement.verify(contract_info.oracle_info.announcement)
+      Announcement.verify(o.contract_info.oracle_info.announcement)
+  end
+
+  def get_announcement(o = %__MODULE__{}) do
+    Contract.get_announcement(o.contract_info)
   end
 
   def calculate_offer_id(o = %__MODULE__{}) do

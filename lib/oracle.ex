@@ -30,6 +30,9 @@ defmodule ExFacto.Oracle do
           announcement: Announcement.t()
         }
 
+  @spec verify_oracle_info(oracle_info()) :: boolean() | {:error, String.t()}
+  def verify_oracle_info(%{announcement: a}), do: Announcement.verify(a)
+
   @spec serialize_oracle_info(oracle_info()) :: binary
   def serialize_oracle_info(o), do: Announcement.serialize(o.announcement)
 
@@ -129,6 +132,13 @@ defmodule ExFacto.Oracle.Announcement do
     announcement = new(signature, point, event)
 
     {announcement, msg}
+  end
+
+  @spec calculate_signature_point(t(), non_neg_integer(), String.t()) :: any()
+  def calculate_signature_point(a = %__MODULE__{}, nonce_idx, outcome) do
+    nonce_point = Enum.at(a.event.nonce_points, nonce_idx)
+    z = sighash(outcome)
+    Schnorr.calculate_signature_point(nonce_point, a.public_key, z)
   end
 end
 

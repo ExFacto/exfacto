@@ -885,6 +885,44 @@ Bob gets a free option here (for now). In the future, we will integrate a Barrie
  }}
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+
+01:03:28.183 [debug] Tzdata polling for update.
+
+01:03:28.448 [info] tzdata release in place is from a file last modified Tue, 29 Nov 2022 17:25:53 GMT. Release file on server was last modified Fri, 24 Mar 2023 03:10:55 GMT.
+
+01:03:28.450 [debug] Tzdata downloading new data from https://data.iana.org/time-zones/tzdata-latest.tar.gz
+
+01:03:28.528 [debug] Tzdata data downloaded. Release version 2023b.
+
+01:03:28.863 [info] Tzdata has updated the release from 2022g to 2023b
+
+01:03:28.863 [debug] Tzdata deleting ETS table for version 2022g
+
+01:03:28.864 [debug] Tzdata deleting ETS table file for version 2022g
+
+12:23:57.925 [debug] Tzdata polling for update.
+
+12:23:58.021 [debug] Tzdata polling shows the loaded tz database is up to date.
+
+15:04:27.539 [debug] Tzdata polling for update.
+
+15:04:27.635 [info] tzdata release in place is from a file last modified Fri, 24 Mar 2023 03:10:55 GMT. Release file on server was last modified Tue, 28 Mar 2023 20:25:39 GMT.
+
+15:04:27.635 [debug] Tzdata downloading new data from https://data.iana.org/time-zones/tzdata-latest.tar.gz
+
+15:04:27.727 [debug] Tzdata data downloaded. Release version 2023c.
+
+15:04:28.073 [info] Tzdata has updated the release from 2023b to 2023c
+
+15:04:28.073 [debug] Tzdata deleting ETS table for version 2023b
+
+15:04:28.075 [debug] Tzdata deleting ETS table file for version 2023b
+
+```
+
 ## Bob Signs Funding Transaction
 
 ```elixir

@@ -95,7 +95,7 @@ defmodule ExFacto.Gambler do
       Chain.chain_hash(g.network.name) != offer.chain_hash ->
         {:error, "mismatch networks"}
 
-      !Announcement.verify(announcement) ->
+      !Announcement.verify(Offer.get_announcement(offer)) ->
         {:error, "oracle announcement verification failed"}
 
       !Offer.verify(offer) ->
@@ -177,83 +177,85 @@ defmodule ExFacto.Gambler do
 
   # TODO dedup this code with the above
   # when an offerer receives an accept, they also need to build all the txs and *sign* them
+  # This function does the verifications and then calls do_offerer_ack_accept
   def offerer_ack_accept(g = %__MODULE__{}, offer = %Offer{}, accept = %Accept{}) do
     # TODO: verify offer&accept
-    cond do
-      !Offer.verify(offer) ->
-        {:error, "offer verification failed"}
-
-      !offer_is_ours(g, offer) ->
-        {:error, "offer does not belong to this gambler"}
-
-      !Accept.verify(offer, accept) ->
-        {:error, "accept verification failed"}
-
-      true ->
-        # pubkeys will be sorted so order doesnt matter here
-        funding_pubkeys = [offer.funding_pubkey, accept.funding_pubkey]
-
-        {funding_amount, accept_change_amount, offer_change_amount} =
-          Builder.calculate_funding_tx_outputs(
-            offer,
-            accept.funding_inputs,
-            accept.payout_script,
-            accept.change_script
-          )
-
-        # recreate funding_scriptpubkey and check that internal key is unsolvable
-        {funding_output, funding_leaf, _} =
-          Builder.build_funding_output(funding_amount, funding_pubkeys, accept.dummy_tapkey_tweak)
-
-        # if either change amount is dust, will not be included
-        change_outputs =
-          Builder.filter_dust_outputs([
-            Builder.new_output(accept_change_amount, g.change_script),
-            Builder.new_output(offer_change_amount, offer.change_script)
-          ])
-
-        inputs = accept.funding_inputs ++ offer.funding_inputs
-
-        # inputs & outputs will be sorted by bip69
-        {funding_tx, funding_outpoint} =
-          Builder.build_funding_tx(
-            inputs,
-            funding_output,
-            change_outputs
-          )
-
-        # Build refund tx
-        {refund_tx, refund_signature} =
-          build_and_sign_refund_tx(
-            g,
-            offer,
-            accept.payout_script,
-            funding_outpoint,
-            funding_output,
-            funding_leaf
-          )
-
-        # build CETs list({outcome, cet_tx})
-        {outcomes_cet_txs, cet_adaptor_signatures} =
-          build_and_sign_cets(g, offer, funding_outpoint, funding_output, funding_leaf)
-
-        # sign funding tx
-        # TODO how is this done?
-        signed_funding_tx = sign_funding_tx(g, funding_tx)
-
-        # the signed funding_tx can be broadcast
-        # the txs just need to be saved by the client, not shared
-        ack =
-          Acknowledge.new(
-            accept.contract_id,
-            signed_funding_tx.witnesses,
-            cet_adaptor_signatures,
-            refund_signature
-          )
-
-        {ack, signed_funding_tx, outcomes_cet_txs, cet_adaptor_signatures, refund_tx,
-         refund_signature}
+    with {_, true} <- {:verify_offer, Offer.verify(offer)},
+         {_, true} <- {:offer_is_ours, offer_is_ours(g, offer)},
+         {_, true} <- {:verify_accept, Accept.verify(offer, accept)} do
+      do_offerer_ack_accept(g, offer, accept)
+    else
+      {:verify_offer, {:error, msg}} -> {:error, "offer verification failed: #{msg}"}
+      {:offer_is_outs, {:error, msg}} -> {:error, "offer does not belong to this gambler: #{msg}"}
+      {:verify_accept, {:error, msg}} -> {:error, "accept verification failed: #{msg}"}
+      {_, err} -> err
     end
+  end
+
+  defp do_offerer_ack_accept(g = %__MODULE__{}, offer = %Offer{}, accept = %Accept{}) do
+    # pubkeys will be sorted so order doesnt matter here
+    funding_pubkeys = [offer.funding_pubkey, accept.funding_pubkey]
+
+    {funding_amount, accept_change_amount, offer_change_amount} =
+      Builder.calculate_funding_tx_outputs(
+        offer,
+        accept.funding_inputs,
+        accept.payout_script,
+        accept.change_script
+      )
+
+    # recreate funding_scriptpubkey and check that internal key is unsolvable
+    {funding_output, funding_leaf, _} =
+      Builder.build_funding_output(funding_amount, funding_pubkeys, accept.dummy_tapkey_tweak)
+
+    # if either change amount is dust, will not be included
+    change_outputs =
+      Builder.filter_dust_outputs([
+        Builder.new_output(accept_change_amount, g.change_script),
+        Builder.new_output(offer_change_amount, offer.change_script)
+      ])
+
+    inputs = accept.funding_inputs ++ offer.funding_inputs
+
+    # inputs & outputs will be sorted by bip69
+    {funding_tx, funding_outpoint} =
+      Builder.build_funding_tx(
+        inputs,
+        funding_output,
+        change_outputs
+      )
+
+    # Build refund tx
+    {refund_tx, refund_signature} =
+      build_and_sign_refund_tx(
+        g,
+        offer,
+        accept.payout_script,
+        funding_outpoint,
+        funding_output,
+        funding_leaf
+      )
+
+    # build CETs list({outcome, cet_tx})
+    {outcomes_cet_txs, cet_adaptor_signatures} =
+      build_and_sign_cets(g, offer, funding_outpoint, funding_output, funding_leaf)
+
+    # sign funding tx
+    # TODO how is this done?
+    signed_funding_tx = sign_funding_tx(g, funding_tx)
+
+    # the signed funding_tx can be broadcast
+    # the txs just need to be saved by the client, not shared
+    ack =
+      Acknowledge.new(
+        accept.contract_id,
+        signed_funding_tx.witnesses,
+        cet_adaptor_signatures,
+        refund_signature
+      )
+
+    {ack, signed_funding_tx, outcomes_cet_txs, cet_adaptor_signatures, refund_tx,
+     refund_signature}
   end
 
   @doc """
@@ -263,49 +265,271 @@ defmodule ExFacto.Gambler do
   @spec offer_is_ours(t(), Offer.t()) :: boolean()
   def offer_is_ours(g = %__MODULE__{}, offer = %Offer{}) do
     g.funding_inputs == offer.funding_inputs &&
-    g.funding_pubkey == offer.funding_pubkey &&
-    g.change_script == offer.change_script &&
-    g.payout_script == offer.payout_script
+      g.funding_pubkey == offer.funding_pubkey &&
+      g.change_script == offer.change_script &&
+      g.payout_script == offer.payout_script
+  end
+
+  def accept_is_ours(g = %__MODULE__{}, accept = %Accept{}) do
+    g.funding_inputs == accept.funding_inputs &&
+      g.funding_pubkey == accept.funding_pubkey &&
+      g.change_script == accept.change_script &&
+      g.payout_script == accept.payout_script
   end
 
   # finalize funding tx
-  def accepter_sign_funding_tx(g = %__MODULE__{}, offer = %Offer{}, accept = %Accept{}, ack = %Acknowledge{}) do
-    # TODO verify refund tx & signature
+  def accepter_handle_ack(
+        g = %__MODULE__{},
+        offer = %Offer{},
+        accept = %Accept{},
+        ack = %Acknowledge{}
+      ) do
+    with {_, true} <- {:verify_offer, Offer.verify(offer)},
+         {_, true} <- {:verify_accept, Accept.verify(offer, accept)},
+         {_, true} <- {:accept_is_ours, accept_is_ours(g, accept)},
+         {_, true} <- {:verify_ack, Acknowledge.verify(offer, accept, ack)} do
+      do_accepter_handle_ack(g, offer, accept, ack)
+    else
+      {:verify_offer, {:error, msg}} -> {:error, "offer verification failed: #{msg}"}
+      {:verify_accept, {:error, msg}} -> {:error, "accept verification failed: #{msg}"}
+      {:verify_ack, {:error, msg}} -> {:error, "ack verification failed: #{msg}"}
+      {_, err} -> err
+    end
+  end
 
+  def do_accepter_handle_ack(
+        g = %__MODULE__{},
+        offer = %Offer{},
+        accept = %Accept{},
+        ack = %Acknowledge{}
+      ) do
+    funding_pubkeys = [offer.funding_pubkey, g.funding_pubkey]
 
-    # TODO verify CETs & signatures
+    {funding_amount, accept_change_amount, offer_change_amount} =
+      Builder.calculate_funding_tx_amounts(
+        offer,
+        accept.funding_inputs,
+        accept.payout_script,
+        accept.change_script
+      )
 
-    # TODO verify funding tx & signatures
+    funding_inputs = accept.funding_inputs ++ offer.funding_inputs
 
+    accept_change_output = Builder.new_output(accept_change_amount, accept.change_script)
+    offer_change_output = Builder.new_output(offer_change_amount, offer.change_script)
+    change_outputs = [accept_change_output, offer_change_output]
+
+    # recreate funding_scriptpubkey and check that internal key is unsolvable
+    {funding_output, funding_leaf, _} =
+      Builder.build_funding_output(funding_amount, funding_pubkeys, accept.dummy_tapkey_tweak)
+
+    case verify_all_contract_signatures(
+           g,
+           offer,
+           accept,
+           ack,
+           funding_inputs,
+           funding_output,
+           change_outputs,
+           funding_leaf
+         ) do
+      {:ok, funding_tx} ->
+        # TODO save txs
+        accepter_sign_funding_tx(g, funding_tx)
+
+      # |> broadcast_tx(funding_tx)
+      {:error, msg} ->
+        {:error, msg}
+    end
+  end
+
+  # run by accepter upon receipt of Acknowledge
+  def verify_all_contract_signatures(
+        g = %__MODULE__{},
+        offer = %Offer{},
+        accept = %Accept{},
+        ack = %Acknowledge{},
+        funding_inputs,
+        funding_output,
+        change_outputs,
+        funding_leaf
+      ) do
+    # check equality of funding_output
+
+    {funding_tx, funding_outpoint} =
+      Builder.build_funding_tx(
+        funding_inputs,
+        funding_output,
+        change_outputs
+      )
+
+    with {_, true} <-
+           {
+             :verify_cets,
+             # verify CETs & signatures
+             verify_cets(
+               offer,
+               accept,
+               funding_outpoint,
+               funding_output,
+               funding_leaf,
+               offer.funding_pubkey,
+               ack.cet_adaptor_signatures
+             )
+           },
+         # TODO verify funding tx & signatures
+        #  {_, true} <-
+        #    {:verify_funding_tx,
+        #     verify_funding_tx(
+        #       g,
+        #       offer,
+        #       accept,
+        #       funding_tx,
+        #       funding_output,
+        #       funding_leaf,
+        #       ack.funding_tx_witnesses
+        #     )},
+         {_, true} <-
+           {:verify_refund_tx,
+            verify_refund_tx_signature(
+              g,
+              offer,
+              accept,
+              funding_tx,
+              funding_output,
+              funding_leaf,
+              offer.funding_pubkey,
+              ack.refund_signature
+            )} do
+      {:ok, funding_tx}
+    else
+      {:verify_cets, {:error, msg}} -> {:error, "cet verification failed: #{msg}"}
+      {:verify_funding_tx, {:error, msg}} -> {:error, "funding tx verification failed: #{msg}"}
+      {:verify_refund_tx, {:error, msg}} -> {:error, "refund tx verification failed: #{msg}"}
+    end
+  end
+
+  def accepter_sign_funding_tx(g, funding_tx) do
     # sign tx
     fully_signed_funding_tx = sign_funding_tx(g, funding_tx)
 
     # broadcast funding_tx
-    # BTCRPC.sendrawtransaction()
+    {fully_signed_funding_tx}
   end
 
-  def verify_refund_tx(g = %__MODULE__{}, offer = %Offer{}, accept = %Accept{}, refund_tx = %Transaction{}) do
-    # TODO verify refund tx & signature
-    funding_tx = Builder.build_refund_tx(
-      funding_outpoint,
-      offer.contract_info.total_collateral,
-      offer.collateral_amount,
-      accept.payout_script,
-      offer.payout_script,
-      offer.refund_locktime
-    )
+  # TODO checkme
+  def verify_refund_tx_signature(
+        _g = %__MODULE__{},
+        _offer = %Offer{},
+        _accept = %Accept{},
+        refund_tx,
+        funding_output,
+        funding_leaf,
+        funding_pubkey,
+        signature
+      ) do
+    prev_scriptpubkey = Base.decode16!(funding_output.script_pubkey)
 
-    # TODO regenerate funding_script & leaf
-
-    funding_sighash =
+    refund_sighash =
       settlement_sighash(
-        funding_tx,
+        refund_tx,
         [funding_output.value],
-        [funding_outp],
+        [prev_scriptpubkey],
         funding_leaf
       )
 
+    if Schnorr.verify_signature(funding_pubkey, refund_sighash, signature) do
+      true
+    else
+      {:error, "refund signature is invalid"}
+    end
+  end
 
+  def verify_cets(
+        offer = %Offer{},
+        accept = %Accept{},
+        funding_input,
+        funding_output,
+        funding_leaf,
+        funding_pubkey,
+        cet_adaptor_signatures
+      ) do
+    prev_value = funding_output.value
+    prev_scriptpubkey = Base.decode16!(funding_output.script_pubkey)
+
+    # [{{outcome, payout}, {sig, was_negated}}]
+    outcome_cets = Enum.zip(offer.contract_info.descriptor, cet_adaptor_signatures)
+
+    cet_results =
+      Enum.map(outcome_cets, fn {outcome_payout, signature} ->
+        verify_cet_tx_adaptor_signature(
+          offer,
+          accept,
+          funding_input,
+          outcome_payout,
+          prev_value,
+          prev_scriptpubkey,
+          funding_leaf,
+          funding_pubkey,
+          signature
+        )
+      end)
+
+    # maybe condense logic
+    if Enum.all?(cet_results) do
+      true
+    else
+      # TODO maybe make error more specific
+      {:error, "at least one cet signature is invalid"}
+    end
+  end
+
+  def verify_cet_tx_adaptor_signature(
+        offer = %Offer{},
+        accept = %Accept{},
+        funding_input,
+        outcome_payout = {outcome, _payout},
+        prev_value,
+        prev_scriptpubkey,
+        funding_leaf,
+        funding_pubkey,
+        {signature, was_negated}
+      ) do
+    cet_tx =
+      Builder.build_cet_tx(
+        funding_input,
+        offer.contract_info.total_collateral,
+        offer.payout_script,
+        accept.payout_script,
+        outcome_payout,
+        offer.cet_locktime
+      )
+
+    cet_sighash =
+      settlement_sighash(
+        cet_tx,
+        [prev_value],
+        [prev_scriptpubkey],
+        funding_leaf
+      )
+
+    # TODO refactor to use all nonce points
+    announcement = offer.contract_info.oracle_info.announcement
+    outcome_sigpoint = Announcement.calculate_signature_point(announcement, 0, outcome)
+
+    case Schnorr.verify_encrypted_signature(
+           signature,
+           funding_pubkey,
+           cet_sighash,
+           outcome_sigpoint,
+           was_negated
+         ) do
+      {:error, _msg} ->
+        {:error, "refund signature is invalid"}
+
+      true ->
+        true
+    end
   end
 
   # SIGNER
@@ -323,7 +547,6 @@ defmodule ExFacto.Gambler do
         funding_output = %Transaction.Out{},
         funding_leaf
       ) do
-
     refund_tx =
       Builder.build_refund_tx(
         funding_outpoint,

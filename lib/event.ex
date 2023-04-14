@@ -113,12 +113,6 @@ defmodule ExFacto.Event do
   #   []
   # end
 
-  # @spec calculate_signature_point(Point.t(), Point.t(), String.t()) :: any()
-  # def calculate_signature_point(pk, r_point, outcome) do
-  #   z = Bitcoinex.Utils.double_sha256(outcome)
-  #   Schnorr.calculate_signature_point(r_point, pk, z)
-  # end
-
   # def get_outcome_sighash(%__MODULE__{outcomes: outcomes}, idx) do
   #   outcomes
   #   |> Enum.at(idx)

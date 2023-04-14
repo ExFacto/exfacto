@@ -86,7 +86,14 @@ defmodule ExFacto.Builder do
     {funding_output, funding_leaf, dummy_tapkey_tweak}
   end
 
-  def build_refund_tx(funding_input, total_collateral, offer_collateral_amount, accept_payout_script, offer_payout_script, locktime) do
+  def build_refund_tx(
+        funding_input,
+        total_collateral,
+        offer_collateral_amount,
+        accept_payout_script,
+        offer_payout_script,
+        locktime
+      ) do
     accept_collateral = total_collateral - offer_collateral_amount
     accept_refund_output = Builder.new_output(accept_collateral, accept_payout_script)
     offer_refund_output = Builder.new_output(offer_collateral_amount, offer_payout_script)
@@ -116,13 +123,13 @@ defmodule ExFacto.Builder do
         contract_descriptor,
         locktime
       ) do
-    build_cet = fn outcome_payout ->
+    build_cet = fn {outcome, payout} ->
       build_cet_tx(
         funding_input,
         total_collateral,
         offer_script,
         accept_script,
-        outcome_payout,
+        {outcome, payout},
         locktime
       )
     end
@@ -145,10 +152,12 @@ defmodule ExFacto.Builder do
     accept_payout = total_collateral - offer_payout
     accept_output = new_output(accept_payout, accept_script)
 
-    outputs = [
-      offer_output,
-      accept_output
-    ]
+    outputs =
+      [
+        offer_output,
+        accept_output
+      ]
+      |> Out.lexicographical_sort_outputs()
 
     {outcome,
      %Transaction{
@@ -257,7 +266,7 @@ defmodule ExFacto.Builder do
 
   def calculate_fee(tx_vbytes, fee_rate), do: tx_vbytes * fee_rate
 
-  def calculate_funding_tx_outputs(
+  def calculate_funding_tx_amounts(
         offer,
         accept_funding_inputs,
         accept_payout_script,

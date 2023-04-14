@@ -96,6 +96,7 @@ defmodule ExFacto.Utils do
     end)
   end
 
+  @spec oracle_tagged_hash(binary, String.t()) :: non_neg_integer
   def oracle_tagged_hash(msg, tag) do
     Utils.tagged_hash("DLC/oracle/#{tag}", msg) |> :binary.decode_unsigned()
   end
