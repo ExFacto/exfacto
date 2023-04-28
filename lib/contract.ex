@@ -3,6 +3,12 @@ defmodule ExFacto.Contract do
 
   alias ExFacto.{Utils, Oracle, Messaging}
 
+  @type_single_contract_info 0
+  @type_disjoint_contract_info 1
+
+  @type_enumerated_contract_descriptor 0
+  @type_numeric_outcome_contract_descriptor 1
+
   @default_contract_flags 0
   @spec default_contract_flags :: 0
   def default_contract_flags(), do: @default_contract_flags
@@ -61,7 +67,9 @@ defmodule ExFacto.Contract do
 
   def serialize_contract_descriptor(descriptor) do
     {ct, ser_outcomes} = Utils.serialize_with_count(descriptor, &serialize_outcome_payout/1)
-    Utils.big_size(ct) <> ser_outcomes
+    msg = Utils.big_size(ct) <> ser_outcomes
+
+    Messaging.to_tlv(@type_enumerated_contract_descriptor, msg)
   end
 
   def serialize_outcome_payout({outcome, payout}) do
@@ -69,6 +77,7 @@ defmodule ExFacto.Contract do
   end
 
   def parse(msg) do
+    {_size, msg} = Messaging.from_tlv(@type_single_contract_info, msg)
     {total_collateral, msg} = Messaging.par(msg, :u64)
     {contract_descriptor, msg} = parse_contract_descriptor(msg)
     {oracle_info, msg} = Oracle.parse_oracle_info(msg)
@@ -78,6 +87,7 @@ defmodule ExFacto.Contract do
 
   @spec parse_contract_descriptor(nonempty_binary) :: {list, any}
   def parse_contract_descriptor(msg) do
+    {_size, msg} = Messaging.from_tlv(@type_enumerated_contract_descriptor, msg)
     {outcome_ct, msg} = Utils.get_counter(msg)
     Messaging.parse_items(msg, outcome_ct, [], &parse_outcome_payout/1)
   end

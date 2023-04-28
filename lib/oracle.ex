@@ -51,7 +51,6 @@ defmodule ExFacto.Oracle do
     sign_event returns an announcement
   """
   def sign_event(o = %__MODULE__{}, event) do
-    # {oracle, index} = increment_next_index(o)
     sighash = Announcement.sighash(event)
     aux = Utils.new_rand_int()
     {:ok, sig} = Schnorr.sign(o.sk, sighash, aux)
@@ -80,6 +79,8 @@ defmodule ExFacto.Oracle.Announcement do
   """
   alias Bitcoinex.Secp256k1.{Signature, Point, Schnorr}
   alias ExFacto.{Event, Utils, Messaging}
+
+  @type_oracle_announcement 55332
 
   @type t :: %__MODULE__{
           signature: Signature.t(),
@@ -110,10 +111,14 @@ defmodule ExFacto.Oracle.Announcement do
 
   @spec serialize(t()) :: binary
   def serialize(a) do
-    Messaging.ser(a.signature, :signature) <>
-      Messaging.ser(a.public_key, :pk) <>
-      Event.serialize(a.event)
+    msg = Messaging.ser(a.signature, :signature) <>
+          Messaging.ser(a.public_key, :pk) <>
+          Event.serialize(a.event)
+
+    Messaging.to_wire(@type_oracle_announcement, msg)
   end
+
+  def to_hex(a), do: serialize(a) |> Utils.bin_to_hex()
 
   # used for signing events (structs)
   @spec sighash(Event.t()) :: non_neg_integer()
@@ -125,6 +130,7 @@ defmodule ExFacto.Oracle.Announcement do
 
   @spec parse(binary) :: {t(), binary}
   def parse(msg) do
+    {_type, msg} = Messaging.from_wire(msg)
     {signature, msg} = Messaging.par(msg, :signature)
     {point, msg} = Messaging.par(msg, :pk)
     {event, msg} = Event.parse(msg)
@@ -144,8 +150,10 @@ end
 
 defmodule ExFacto.Oracle.Attestation do
   alias ExFacto.Utils
-  alias Bitcoinex.Secp256k1.{Signature, Point}
+  alias Bitcoinex.Secp256k1.{Signature, PrivateKey, Point}
   alias ExFacto.Messaging
+
+  @type_oracle_attestation 55400
 
   @type t :: %__MODULE__{
           event_id: String.t(),
@@ -186,15 +194,19 @@ defmodule ExFacto.Oracle.Attestation do
     {^sig_ct, ser_outcomes} =
       Utils.serialize_with_count(a.outcomes, fn o -> Messaging.ser(o, :utf8) end)
 
+    msg =
     Messaging.ser(a.event_id, :utf8) <>
       Messaging.ser(a.public_key, :pk) <>
       Messaging.ser(sig_ct, :u16) <>
       ser_sigs <>
       ser_outcomes
+
+    Messaging.to_wire(@type_oracle_attestation, msg)
   end
 
   @spec parse(nonempty_binary) :: {t(), binary}
   def parse(msg) do
+    {_size, msg} = Messaging.from_wire(@type_oracle_attestation, msg)
     {event_id, msg} = Messaging.par(msg, :utf8)
     {pubkey, msg} = Messaging.par(msg, :pk)
     {sig_ct, msg} = Utils.get_counter(msg)
@@ -209,4 +221,11 @@ defmodule ExFacto.Oracle.Attestation do
 
   def sighash(outcome),
     do: Utils.oracle_tagged_hash(outcome, "attestation/v0") |> :binary.encode_unsigned()
+
+  @spec extract_decryption_key(t()) :: PrivateKey.t()
+  def extract_decryption_key(attestation = %__MODULE__{}) do
+    %Signature{s: tweak} = Enum.at(attestation.signatures, 0)
+    {:ok, sk} = PrivateKey.new(tweak)
+    sk
+  end
 end

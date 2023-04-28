@@ -2,6 +2,9 @@ defmodule ExFacto.Event do
   alias ExFacto.{Messaging, Utils}
   alias Bitcoinex.Secp256k1.{PrivateKey, Point}
 
+  @type_oracle_event 55330
+  @type_enum_event_descriptor 55302
+
   @type t :: %__MODULE__{
           id: String.t(),
           # for now, only once nonce point per event
@@ -31,12 +34,13 @@ defmodule ExFacto.Event do
   def serialize(event) do
     {ct, ser_nonces} = Utils.serialize_with_count(event.nonce_points, &Point.x_bytes/1)
 
-    # BUG is this bigsize or u16
-    Messaging.ser(ct, :u32) <>
+    msg = Messaging.ser(ct, :u16) <>
       ser_nonces <>
       Messaging.ser(event.maturity_epoch, :u32) <>
       serialize_event_descriptor(event.descriptor) <>
       Messaging.ser(event.id, :utf8)
+
+    Messaging.to_tlv(@type_oracle_event, msg)
   end
 
   def parse_nonce_point(msg) do
@@ -46,8 +50,8 @@ defmodule ExFacto.Event do
   end
 
   def parse(msg) do
-    # BUG is this bigsize or u16
-    {nonce_ct, msg} = Messaging.par(msg, :u32)
+    {_size, msg} = Messaging.from_tlv(@type_oracle_event, msg)
+    {nonce_ct, msg} = Messaging.par(msg, :u16)
     {nonce_points, msg} = Messaging.parse_items(msg, nonce_ct, [], &parse_nonce_point/1)
     {maturity_epoch, msg} = Messaging.par(msg, :u32)
     {descriptor, msg} = parse_event_descriptor(msg)
@@ -70,14 +74,14 @@ defmodule ExFacto.Event do
   def serialize_event_descriptor(descriptor) do
     {ct, ser_outcomes} =
       Utils.serialize_with_count(descriptor.outcomes, fn o -> Messaging.ser(o, :utf8) end)
+    msg = Messaging.ser(ct, :u16) <> ser_outcomes
 
-    # BUG is this u16 or u32? see spec
-    Messaging.ser(ct, :u32) <> ser_outcomes
+    Messaging.to_tlv(@type_enum_event_descriptor, msg)
   end
 
   def parse_event_descriptor(msg) do
-    # BUG is this u16 or u32? see spec
-    {outcome_ct, msg} = Messaging.par(msg, :u32)
+    {_size, msg} = Messaging.from_tlv(@type_enum_event_descriptor, msg)
+    {outcome_ct, msg} = Messaging.par(msg, :u16)
 
     {outcomes, msg} =
       Messaging.parse_items(msg, outcome_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
@@ -112,21 +116,4 @@ defmodule ExFacto.Event do
   #   # Enum.map(outcomes, fn outcome -> calculate_all_signature_points(pk, r_point, outcome) end)
   #   []
   # end
-
-  # def get_outcome_sighash(%__MODULE__{outcomes: outcomes}, idx) do
-  #   outcomes
-  #   |> Enum.at(idx)
-  #   |> ExFacto.Oracle.Attestation.sighash()
-  #   |> :binary.decode_unsigned()
-  # end
-
-  # def resolve(event, outcome_idx, oracle, signature) do
-  #   %{
-  #     pubkey: oracle.pk,
-  #     signature: signature,
-  #     outcome: Enum.at(event, outcome_idx)
-  #   }
-  # end
-
-  # def get_secret_from_resolution(%{signature: %{s: s}}), do: PrivateKey.new(s)
 end

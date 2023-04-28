@@ -264,6 +264,35 @@ defmodule ExFacto.MessagingTest do
     }
   ]
 
+  @dlcspec_announcements [
+    %{
+    hex: "fdd824b28b92f54b966050ff418fc371d99bf9293564a889ee5570c5a0267b0ff08f594178d372a56f7ecb48108a5e78295bad19cc7c02d11b313a5716602cbcdca718666d5b21a0fd11bc339b4811f74ce5c4eccad4e0f20d44e2aabdec06bf206397aefdd8224e00013a2c422295dce607d3350e09530ae713a58fd5629e287452d400910c34142a706317df00fdd8060e0002054845414453055441494c531559657420416e6f7468657220436f696e20466c6970",
+    announcement: %ExFacto.Oracle.Announcement{
+      signature: %Bitcoinex.Secp256k1.Signature{
+        r: 63131138590219101837408461175232692705436038477762288089920157340453431105857,
+        s: 54651137819876764332013655892062080287140530153877749890519026210989052205158
+      },
+      public_key: %Bitcoinex.Secp256k1.Point{
+        x: 49463115676343085754197350475275151660295559127171114198435097608539563333550,
+        y: 51625052320939938233560171558171669425913728132246447519429399557637745226896,
+        z: 0
+      },
+      event: %ExFacto.Event{
+        id: "Yet Another Coin Flip",
+        nonce_points: [
+          %Bitcoinex.Secp256k1.Point{
+            x: 26312342936359178150622555548499246551738633326874346112063830638709802543728,
+            y: 74615337950833348788289066904762431058621341577109663184119116632231914658250,
+            z: 0
+          }
+        ],
+        descriptor: %{outcomes: ["HEADS", "TAILS"]},
+        maturity_epoch: 1662508800
+      }
+    }
+  },
+  ]
+
   @attestations [
     # TODO
   ]
@@ -638,6 +667,16 @@ defmodule ExFacto.MessagingTest do
           |> Accept.parse()
 
         assert msg == t
+      end
+    end
+  end
+
+  describe "dlcspec compliance" do
+    test "announcement" do
+      for t <- @dlcspec_announcements do
+        msg = Announcement.to_hex(t.announcement)
+
+        assert msg == t.hex
       end
     end
   end

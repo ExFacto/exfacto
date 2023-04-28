@@ -29,3 +29,5 @@ write verification into
     - Verify CET Signatures & funding signatures
 
     DO we need to verify counterparties' scripts? no, as long as they parse to a script, should be good, we dont care if they're unspendable
+
+Test contract_descriptor serialization symmetry

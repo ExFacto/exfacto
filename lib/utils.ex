@@ -104,4 +104,8 @@ defmodule ExFacto.Utils do
   def contractor_tagged_hash(msg, tag) do
     Utils.tagged_hash("DLC/contractor/#{tag}", msg)
   end
+
+  def bin_to_hex(data), do: Base.encode16(data, case: :lower)
+  def hex_to_bin(data), do: Base.decode16(data, case: :lower)
+  def hex_to_bin!(data), do: Base.decode16!(data, case: :lower)
 end

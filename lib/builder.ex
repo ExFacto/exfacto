@@ -7,6 +7,8 @@ defmodule ExFacto.Builder do
   @tx_version 2
   @default_sequence 0xFFFFFFFE
   @default_locktime 0
+  # sighash default
+  @default_cet_hash_type 0x00
 
   def new_output(value, scriptpubkey),
     do: %Out{value: value, script_pub_key: Script.to_hex(scriptpubkey)}
@@ -30,11 +32,11 @@ defmodule ExFacto.Builder do
 
     funding_txid = Transaction.transaction_id(funding_tx)
 
-    # funding_outpoint used as single input to CETs & Refund tx
-    funding_outpoint = build_funding_outpoint(funding_txid, funding_vout)
+    # settlement_txin used as single input to CETs & Refund tx
+    settlement_txin = build_settlement_txin(funding_txid, funding_vout)
 
     # TODO: also build and return psbt
-    {funding_tx, funding_outpoint}
+    {funding_tx, settlement_txin}
   end
 
   def funding_input_to_txin(input_info) do
@@ -87,7 +89,7 @@ defmodule ExFacto.Builder do
   end
 
   def build_refund_tx(
-        funding_input,
+        settlement_txin,
         total_collateral,
         offer_collateral_amount,
         accept_payout_script,
@@ -105,7 +107,7 @@ defmodule ExFacto.Builder do
 
     %Transaction{
       version: @tx_version,
-      inputs: [funding_input],
+      inputs: [settlement_txin],
       outputs: outputs,
       witnesses: nil,
       lock_time: locktime
@@ -116,7 +118,7 @@ defmodule ExFacto.Builder do
 
   # returns list({outcome, cet_tx})
   def build_all_cets(
-        funding_input,
+        settlement_txin,
         total_collateral,
         offer_script,
         accept_script,
@@ -125,7 +127,7 @@ defmodule ExFacto.Builder do
       ) do
     build_cet = fn {outcome, payout} ->
       build_cet_tx(
-        funding_input,
+        settlement_txin,
         total_collateral,
         offer_script,
         accept_script,
@@ -138,7 +140,7 @@ defmodule ExFacto.Builder do
   end
 
   def build_cet_tx(
-        funding_input,
+        settlement_txin,
         total_collateral,
         offer_script,
         accept_script,
@@ -162,13 +164,13 @@ defmodule ExFacto.Builder do
     {outcome,
      %Transaction{
        version: @tx_version,
-       inputs: [funding_input],
+       inputs: [settlement_txin],
        outputs: outputs,
        lock_time: locktime
      }}
   end
 
-  def build_outpoint(txid, vout, sequence) do
+  def build_txin(txid, vout, sequence) do
     %In{
       prev_txid: txid,
       prev_vout: vout,
@@ -177,8 +179,8 @@ defmodule ExFacto.Builder do
     }
   end
 
-  def build_funding_outpoint(funding_txid, funding_vout),
-    do: build_outpoint(funding_txid, funding_vout, @default_sequence)
+  def build_settlement_txin(funding_txid, funding_vout),
+    do: build_txin(funding_txid, funding_vout, @default_sequence)
 
   def funding_control_block(funding_pubkey, funding_leaf) do
     # funding output script tree only has 1 leaf, so index must be 0
@@ -494,5 +496,38 @@ defmodule ExFacto.Builder do
     sorted_sigs = Enum.map(sorted_pubkeys, fn pk -> Map.fetch!(pk_sigs_map, pk) end)
     # because Script is evaluated as stack, must reverse signatures order
     Enum.reverse(sorted_sigs)
+  end
+
+  def build_signed_cet(unsigned_cet_tx, funding_leaf, dummy_tapkey_tweak, signatures, cet_hash_type \\ @default_cet_hash_type) do
+    cet_hash_byte =
+      if cet_hash_type == 0x00 do
+        <<>>
+      else
+        <<cet_hash_type>>
+      end
+
+    serialized_sigs = Enum.map(signatures, fn sig ->
+      sig <> cet_hash_byte |> Base.encode16(case: :lower)
+    end)
+
+    {:ok, funding_script, _r} =
+      Script.create_p2tr_script_only(funding_leaf, dummy_tapkey_tweak)
+    # fund_p is the internal taproot key. In this case, it is unsolvable.
+    funding_p = Script.calculate_unsolvable_internal_key(dummy_tapkey_tweak)
+
+    funding_script_hex = Script.to_hex(funding_script)
+
+    # We take fund_leaf, the script_tree, and select the index of the script we want to spend.
+    # Here, there is only 1 script in the tree, so idx must be 0
+    control_block = Taproot.build_control_block(funding_p, funding_leaf, 0)
+    control_block_hex = control_block |> Base.encode16(case: :lower)
+
+    # populate the witness
+    %Transaction{unsigned_cet_tx | witnesses: [
+        %Transaction.Witness{
+          txinwitness:  serialized_sigs ++ [funding_script_hex, control_block_hex]
+        }
+      ]
+    }
   end
 end

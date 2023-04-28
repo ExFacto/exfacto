@@ -5,6 +5,22 @@ defmodule ExFacto.Messaging do
   alias Bitcoinex.Transaction.{Witness}
   alias Bitcoinex.Secp256k1.{Point, Signature}
 
+  def to_wire(type, msg) do
+    <<0xfd>> <> ser(type, :u16) <> msg
+  end
+
+  def from_wire(<<0xfd>> <> msg) do
+    {type, msg} = par(msg, :u16)
+    {type, msg}
+  end
+  def from_tlv(type, msg) do
+    {^type, msg} = par(msg, :u16)
+    Utils.get_counter(msg)
+  end
+  def to_tlv(type, data) do
+    ser(type, :u16) <> Utils.with_big_size(data)
+  end
+
   def ser(false, :bool), do: <<0x00>>
   def ser(true, :bool), do: <<0x01>>
   def ser(i, :u8), do: <<i::big-size(8)>>
