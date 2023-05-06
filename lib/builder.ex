@@ -498,7 +498,13 @@ defmodule ExFacto.Builder do
     Enum.reverse(sorted_sigs)
   end
 
-  def build_signed_cet(unsigned_cet_tx, funding_leaf, dummy_tapkey_tweak, signatures, cet_hash_type \\ @default_cet_hash_type) do
+  def build_signed_cet(
+        unsigned_cet_tx,
+        funding_leaf,
+        dummy_tapkey_tweak,
+        signatures,
+        cet_hash_type \\ @default_cet_hash_type
+      ) do
     cet_hash_byte =
       if cet_hash_type == 0x00 do
         <<>>
@@ -506,12 +512,12 @@ defmodule ExFacto.Builder do
         <<cet_hash_type>>
       end
 
-    serialized_sigs = Enum.map(signatures, fn sig ->
-      sig <> cet_hash_byte |> Base.encode16(case: :lower)
-    end)
+    serialized_sigs =
+      Enum.map(signatures, fn sig ->
+        (sig <> cet_hash_byte) |> Base.encode16(case: :lower)
+      end)
 
-    {:ok, funding_script, _r} =
-      Script.create_p2tr_script_only(funding_leaf, dummy_tapkey_tweak)
+    {:ok, funding_script, _r} = Script.create_p2tr_script_only(funding_leaf, dummy_tapkey_tweak)
     # fund_p is the internal taproot key. In this case, it is unsolvable.
     funding_p = Script.calculate_unsolvable_internal_key(dummy_tapkey_tweak)
 
@@ -523,11 +529,13 @@ defmodule ExFacto.Builder do
     control_block_hex = control_block |> Base.encode16(case: :lower)
 
     # populate the witness
-    %Transaction{unsigned_cet_tx | witnesses: [
-        %Transaction.Witness{
-          txinwitness:  serialized_sigs ++ [funding_script_hex, control_block_hex]
-        }
-      ]
+    %Transaction{
+      unsigned_cet_tx
+      | witnesses: [
+          %Transaction.Witness{
+            txinwitness: serialized_sigs ++ [funding_script_hex, control_block_hex]
+          }
+        ]
     }
   end
 end

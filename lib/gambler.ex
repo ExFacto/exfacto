@@ -378,17 +378,17 @@ defmodule ExFacto.Gambler do
              )
            },
          # TODO verify funding tx & signatures
-        #  {_, true} <-
-        #    {:verify_funding_tx,
-        #     verify_funding_tx(
-        #       g,
-        #       offer,
-        #       accept,
-        #       funding_tx,
-        #       funding_output,
-        #       funding_leaf,
-        #       ack.funding_tx_witnesses
-        #     )},
+         #  {_, true} <-
+         #    {:verify_funding_tx,
+         #     verify_funding_tx(
+         #       g,
+         #       offer,
+         #       accept,
+         #       funding_tx,
+         #       funding_output,
+         #       funding_leaf,
+         #       ack.funding_tx_witnesses
+         #     )},
          {_, true} <-
            {:verify_refund_tx,
             verify_refund_tx_signature(
@@ -695,22 +695,21 @@ defmodule ExFacto.Gambler do
     |> :binary.decode_unsigned()
   end
 
-  def settle_contract(announcement, attestation, offer, accept, ack) do
+  def sign_cet_settlement(announcement, attestation, offer, accept, ack) do
     with {_, true} <- {:verify_attestation, Attestation.verify(announcement, attestation)} do
-      do_settle_contract(announcement, attestation, offer, accept, ack)
+      do_sign_cet_settlement(attestation, offer, accept, ack)
     else
       {:verify_attestation, msg} ->
         {:error, msg}
     end
   end
 
-  defp do_settle_contract(
-    announcement = %Announcement{},
-    attestation = %Attestation{},
-    offer = %Offer{},
-    accept = %Accept{},
-    ack = %Acknowledge{}
-  ) do
+  defp do_sign_cet_settlement(
+         attestation = %Attestation{},
+         offer = %Offer{},
+         accept = %Accept{},
+         ack = %Acknowledge{}
+       ) do
     # pubkeys will be sorted so order doesnt matter here
     funding_pubkeys = [offer.funding_pubkey, accept.funding_pubkey]
 
@@ -719,7 +718,7 @@ defmodule ExFacto.Gambler do
 
     inputs = offer.funding_inputs ++ accept.funding_inputs
 
-    {funding_amount, accept_change_amount, offer_change_amount} =
+    {funding_amount, _accept_change_amount, _offer_change_amount} =
       Builder.calculate_funding_tx_outputs(
         offer,
         accept.funding_inputs,
@@ -745,44 +744,53 @@ defmodule ExFacto.Gambler do
         change_outputs
       )
 
-    decryption_key = Attestation.extract_decryption_key(attestation)
     outcome = Enum.at(attestation.outcomes, 0)
     # TODO: redundant but both index and payout are needed
     outcome_idx = Enum.find_index(offer.contract_info.descriptor, fn {o, _p} -> o == outcome end)
     {_outcome, payout} = Enum.at(offer.contract_info.descriptor, outcome_idx)
 
-    unsigned_cet_tx = Builder.build_cet_tx(
-      settlement_txin,
-      offer.total_collateral,
-      offer.payout_script,
-      accept.payout_script,
-      {outcome, payout},
-      offer.cet_locktime
-    )
+    unsigned_cet_tx =
+      Builder.build_cet_tx(
+        settlement_txin,
+        offer.total_collateral,
+        offer.payout_script,
+        accept.payout_script,
+        {outcome, payout},
+        offer.cet_locktime
+      )
 
-    {offer_cet_sig, accept_cet_sig} = decrypt_adaptor_signatures(accept, ack, outcome_idx)
+    {offer_cet_sig, accept_cet_sig} = decrypt_adaptor_signatures(accept, ack, attestation, outcome_idx)
     # TODO look at funding pubkeys and order sigs correctly
     funding_pubkeys_signatures = [
       {offer.funding_pubkey, offer_cet_sig},
       {accept.funding_pubkey, accept_cet_sig}
     ]
+
     sorted_sigs = Builder.sort_signatures_by_pubkey(funding_pubkeys_signatures)
     # fill in sigs for CET, build full witness
-    cet_witness = Builder.build_signed_cet(unsigned_cet_tx, funding_leaf, dummy_tapkey_tweak, sorted_sigs)
+    cet_witness =
+      Builder.build_signed_cet(unsigned_cet_tx, funding_leaf, dummy_tapkey_tweak, sorted_sigs)
+
     # validate CET tx
     # TODO Make RPC call to bitcoind to validate tx
   end
 
-  def decrypt_adaptor_signatures(accept, ack, outcome_idx) do
+  def decrypt_adaptor_signatures(accept = %Accept{}, ack = %Acknowledge{}, attestation = %Announcement{}, outcome_idx) do
     {offer_cet_adaptor_sig, accept_cet_adaptor_sig} =
       {Enum.at(ack.cet_adaptor_signatures, outcome_idx),
-      Enum.at(accept.cet_adaptor_signatures, outcome_idx)}
+       Enum.at(accept.cet_adaptor_signatures, outcome_idx)}
+
+    decryption_key = Attestation.extract_decryption_key(attestation)
 
     {decrypt_adaptor_signature(offer_cet_adaptor_sig, decryption_key),
      decrypt_adaptor_signature(accept_cet_adaptor_sig, decryption_key)}
   end
 
   def decrypt_adaptor_signature(adaptor_sig, decryption_key) do
-    Schnorr.decrypt_signature(adaptor_sig.adaptor_signature, decryption_key, adaptor_sig.was_negated)
+    Schnorr.decrypt_signature(
+      adaptor_sig.adaptor_signature,
+      decryption_key,
+      adaptor_sig.was_negated
+    )
   end
 end

@@ -1,0 +1,75 @@
+# Oracle Announcement & Attestation
+
+```elixir
+exfacto_root = Path.join(__DIR__, "..")
+
+Mix.install(
+  [
+    {:exfacto, path: exfacto_root, env: :dev}
+  ],
+  config_path: Path.join(exfacto_root, "config/config.exs"),
+  lockfile: Path.join(exfacto_root, "mix.lock")
+)
+```
+
+## Imports
+
+```elixir
+alias ExFacto.{Oracle, Event, Utils}
+alias ExFacto.Oracle.{Announcement, Attestation}
+alias Bitcoinex.Secp256k1.{PrivateKey, Point, Signature, Schnorr}
+```
+
+## Setup Oracle
+
+```elixir
+sk = %Bitcoinex.Secp256k1.PrivateKey{
+  d:
+    105_109_275_908_588_358_407_071_314_860_023_590_008_777_255_229_794_870_002_062_334_099_626_406_356_196
+}
+
+oracle = Oracle.new(sk)
+```
+
+## Create Event
+
+```elixir
+outcomes = ["YES", "NO"]
+event_descriptor = %{outcomes: outcomes}
+maturity_timestamp = 1_682_800_473
+
+{nonce_sk, event} =
+  Event.new_event_from_enum_event_descriptor(
+    event_descriptor,
+    maturity_timestamp,
+    &ExFacto.Utils.new_private_key/0
+  )
+```
+
+## Oracle Signs Event
+
+```elixir
+oracle_info = Oracle.sign_event(oracle, event)
+```
+
+Verify the Announcement
+
+```elixir
+Announcement.verify(oracle_info.announcement)
+```
+
+```elixir
+Announcement.to_hex(oracle_info.announcement)
+```
+
+## Oracle Signs Attestation
+
+attest to the first outcome
+
+```elixir
+attestation = Oracle.attest(oracle, oracle_info.announcement, 0)
+```
+
+```elixir
+Attestation.serialize(attestation) |> Base.encode16(case: :lower)
+```

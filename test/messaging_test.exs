@@ -2,7 +2,7 @@ defmodule ExFacto.MessagingTest do
   use ExUnit.Case
   doctest ExFacto.Messaging
 
-  alias ExFacto.{Messaging, Oracle, Event}
+  alias ExFacto.{Messaging, Event}
   alias ExFacto.Oracle.{Announcement, Attestation}
   alias ExFacto.Contract.{Offer, Accept}
   alias Bitcoinex.{Script, Transaction}
@@ -264,37 +264,88 @@ defmodule ExFacto.MessagingTest do
     }
   ]
 
+  @dlcspec_events [
+    %{
+    hex: "fdd8224e00013a2c422295dce607d3350e09530ae713a58fd5629e287452d400910c34142a706317df00fdd8060e0002054845414453055441494c531559657420416e6f7468657220436f696e20466c6970",
+    event: %ExFacto.Event{
+      id: "Yet Another Coin Flip",
+      nonce_points: [
+        %Bitcoinex.Secp256k1.Point{
+          x: 26312342936359178150622555548499246551738633326874346112063830638709802543728,
+          y: 74615337950833348788289066904762431058621341577109663184119116632231914658250,
+          z: 0
+        }
+      ],
+      descriptor: %{outcomes: ["HEADS", "TAILS"]},
+      maturity_epoch: 1662508800
+    }
+  }
+  ]
+
   @dlcspec_announcements [
     %{
-    hex: "fdd824b28b92f54b966050ff418fc371d99bf9293564a889ee5570c5a0267b0ff08f594178d372a56f7ecb48108a5e78295bad19cc7c02d11b313a5716602cbcdca718666d5b21a0fd11bc339b4811f74ce5c4eccad4e0f20d44e2aabdec06bf206397aefdd8224e00013a2c422295dce607d3350e09530ae713a58fd5629e287452d400910c34142a706317df00fdd8060e0002054845414453055441494c531559657420416e6f7468657220436f696e20466c6970",
-    announcement: %ExFacto.Oracle.Announcement{
-      signature: %Bitcoinex.Secp256k1.Signature{
-        r: 63131138590219101837408461175232692705436038477762288089920157340453431105857,
-        s: 54651137819876764332013655892062080287140530153877749890519026210989052205158
-      },
-      public_key: %Bitcoinex.Secp256k1.Point{
-        x: 49463115676343085754197350475275151660295559127171114198435097608539563333550,
-        y: 51625052320939938233560171558171669425913728132246447519429399557637745226896,
-        z: 0
-      },
-      event: %ExFacto.Event{
-        id: "Yet Another Coin Flip",
-        nonce_points: [
-          %Bitcoinex.Secp256k1.Point{
-            x: 26312342936359178150622555548499246551738633326874346112063830638709802543728,
-            y: 74615337950833348788289066904762431058621341577109663184119116632231914658250,
-            z: 0
-          }
-        ],
-        descriptor: %{outcomes: ["HEADS", "TAILS"]},
-        maturity_epoch: 1662508800
+      hex:
+        "fdd824b28b92f54b966050ff418fc371d99bf9293564a889ee5570c5a0267b0ff08f594178d372a56f7ecb48108a5e78295bad19cc7c02d11b313a5716602cbcdca718666d5b21a0fd11bc339b4811f74ce5c4eccad4e0f20d44e2aabdec06bf206397aefdd8224e00013a2c422295dce607d3350e09530ae713a58fd5629e287452d400910c34142a706317df00fdd8060e0002054845414453055441494c531559657420416e6f7468657220436f696e20466c6970",
+      announcement: %ExFacto.Oracle.Announcement{
+        signature: %Bitcoinex.Secp256k1.Signature{
+          r:
+            63_131_138_590_219_101_837_408_461_175_232_692_705_436_038_477_762_288_089_920_157_340_453_431_105_857,
+          s:
+            54_651_137_819_876_764_332_013_655_892_062_080_287_140_530_153_877_749_890_519_026_210_989_052_205_158
+        },
+        public_key: %Bitcoinex.Secp256k1.Point{
+          x:
+            49_463_115_676_343_085_754_197_350_475_275_151_660_295_559_127_171_114_198_435_097_608_539_563_333_550,
+          y:
+            51_625_052_320_939_938_233_560_171_558_171_669_425_913_728_132_246_447_519_429_399_557_637_745_226_896,
+          z: 0
+        },
+        event: %ExFacto.Event{
+          id: "Yet Another Coin Flip",
+          nonce_points: [
+            %Bitcoinex.Secp256k1.Point{
+              x:
+                26_312_342_936_359_178_150_622_555_548_499_246_551_738_633_326_874_346_112_063_830_638_709_802_543_728,
+              y:
+                74_615_337_950_833_348_788_289_066_904_762_431_058_621_341_577_109_663_184_119_116_632_231_914_658_250,
+              z: 0
+            }
+          ],
+          descriptor: %{outcomes: ["HEADS", "TAILS"]},
+          maturity_epoch: 1_662_508_800
+        }
       }
     }
-  },
   ]
 
   @attestations [
     # TODO
+  ]
+
+  @dlcspec_attestations [
+    %{
+      hex:
+        "fdd8687e1559657420416e6f7468657220436f696e20466c69706d5b21a0fd11bc339b4811f74ce5c4eccad4e0f20d44e2aabdec06bf206397ae00013a2c422295dce607d3350e09530ae713a58fd5629e287452d400910c34142a7025bad1cf89e77cac10501dfba25c119f7ec9b40310d613b888cee36e1bbd4b1c055441494c53",
+      attestation: %ExFacto.Oracle.Attestation{
+        public_key: %Bitcoinex.Secp256k1.Point{
+          x:
+            49_463_115_676_343_085_754_197_350_475_275_151_660_295_559_127_171_114_198_435_097_608_539_563_333_550,
+          y:
+            51_625_052_320_939_938_233_560_171_558_171_669_425_913_728_132_246_447_519_429_399_557_637_745_226_896,
+          z: 0
+        },
+        signatures: [
+          %Bitcoinex.Secp256k1.Signature{
+            r:
+              26_312_342_936_359_178_150_622_555_548_499_246_551_738_633_326_874_346_112_063_830_638_709_802_543_728,
+            s:
+              17_065_657_011_848_087_370_286_112_004_192_896_998_581_158_334_111_134_043_677_060_478_850_448_575_260
+          }
+        ],
+        event_id: "Yet Another Coin Flip",
+        outcomes: ["TAILS"]
+      }
+    }
   ]
 
   @offers [
@@ -672,11 +723,36 @@ defmodule ExFacto.MessagingTest do
   end
 
   describe "dlcspec compliance" do
+    test "events" do
+      for t <- @dlcspec_events do
+        # serialize
+        msg = Event.to_hex(t.event)
+        assert msg == t.hex
+        # parse
+        {event, <<>>} = Event.parse(t.hex)
+        assert event == t.event
+      end
+    end
+
     test "announcement" do
       for t <- @dlcspec_announcements do
+        # serialize
         msg = Announcement.to_hex(t.announcement)
-
         assert msg == t.hex
+        # parse
+        {ann, <<>>} = Announcement.parse(t.hex)
+        assert ann == t.announcement
+      end
+    end
+
+    test "attestations" do
+      for t <- @dlcspec_attestations do
+        # serialize
+        msg = Attestation.to_hex(t.attestation)
+        assert msg == t.hex
+        # parse
+        {att, <<>>} = Attestation.parse(t.hex)
+        assert att == t.attestation
       end
     end
   end

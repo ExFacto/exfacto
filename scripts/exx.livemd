@@ -1,0 +1,82 @@
+# Oracle announcement ex
+
+```elixir
+exfacto_root = Path.join(__DIR__, "..")
+
+Mix.install(
+  [
+    {:exfacto, path: exfacto_root, env: :dev}
+  ],
+  config_path: Path.join(exfacto_root, "config/config.exs"),
+  lockfile: Path.join(exfacto_root, "mix.lock")
+)
+```
+
+## Imports
+
+```elixir
+alias ExFacto.{Oracle, Event, Utils}
+alias ExFacto.Oracle.{Announcement, Attestation}
+alias Bitcoinex.Secp256k1.{PrivateKey, Point, Signature, Schnorr}
+```
+
+## Oracle
+
+```elixir
+sk = %PrivateKey{
+  d:
+    105_109_275_908_588_358_407_071_314_860_023_590_008_777_255_229_794_870_002_062_334_099_626_406_356_196
+}
+
+oracle = Oracle.new(sk)
+```
+
+## Announcement
+
+```elixir
+oracle_info = %{
+  announcement: %ExFacto.Oracle.Announcement{
+    signature: %Signature{
+      r:
+        31_045_517_398_246_605_770_062_349_840_396_500_792_869_516_919_340_360_916_605_700_495_368_497_789_124,
+      s:
+        36_670_995_720_830_775_369_704_355_707_850_105_421_653_786_960_623_396_082_566_927_461_098_593_872_394
+    },
+    public_key: %Point{
+      x:
+        29_630_562_168_531_646_875_397_867_722_377_232_620_905_593_828_242_482_907_775_532_324_948_418_281_147,
+      y:
+        65_940_222_474_560_301_692_772_496_062_614_354_030_593_450_703_474_045_959_339_849_804_527_137_939_264,
+      z: 0
+    },
+    event: %ExFacto.Event{
+      id: "d11565653cbad48aeb51a4ba7a041c738a4491c8401fc87f6f2dfd1b8ebb875d",
+      nonce_points: [
+        %Bitcoinex.Secp256k1.Point{
+          x:
+            1_101_958_826_426_548_653_985_339_649_956_832_678_757_112_344_108_363_876_179_362_493_188_483_279_752,
+          y:
+            56_242_399_600_323_711_739_652_583_887_150_683_407_649_733_262_432_147_382_754_437_661_596_140_896_388,
+          z: 0
+        }
+      ],
+      descriptor: %{outcomes: ["YES", "NO"]},
+      maturity_epoch: 1_682_800_473
+    }
+  }
+}
+```
+
+## Attestation
+
+```elixir
+attestation = Oracle.attest(oracle, oracle_info.announcement, 0)
+```
+
+```elixir
+Announcement.to_hex(oracle_info.announcement)
+```
+
+```elixir
+Attestation.serialize(attestation) |> Base.encode16(case: :lower)
+```

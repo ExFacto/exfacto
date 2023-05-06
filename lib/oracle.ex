@@ -58,6 +58,12 @@ defmodule ExFacto.Oracle do
     %{announcement: Announcement.new(sig, o.pk, event)}
   end
 
+  def attest(o = %__MODULE__{}, announcement, outcome_idx) do
+    outcome = Enum.at(announcement.event.descriptor.outcomes, outcome_idx)
+    {:ok, sig} = sign_outcome(o.sk, outcome)
+    Attestation.new(announcement.event.id, o.pk, [sig], [outcome])
+  end
+
   # a single_oracle_info is just a wrapped oracle_announcement
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#single_oracle_info
   @spec new_single_oracle_info(t(), Event.t()) :: oracle_info()
@@ -111,9 +117,10 @@ defmodule ExFacto.Oracle.Announcement do
 
   @spec serialize(t()) :: binary
   def serialize(a) do
-    msg = Messaging.ser(a.signature, :signature) <>
-          Messaging.ser(a.public_key, :pk) <>
-          Event.serialize(a.event)
+    msg =
+      Messaging.ser(a.signature, :signature) <>
+        Messaging.ser(a.public_key, :pk) <>
+        Event.serialize(a.event)
 
     Messaging.to_wire(@type_oracle_announcement, msg)
   end
@@ -130,14 +137,20 @@ defmodule ExFacto.Oracle.Announcement do
 
   @spec parse(binary) :: {t(), binary}
   def parse(msg) do
-    {_type, msg} = Messaging.from_wire(msg)
+    case Utils.hex_to_bin(msg) do
+      {:ok, msg} -> do_parse(msg)
+      {:error, _} -> do_parse(msg)
+    end
+  end
+  def do_parse(msg) do
+    {_type, msg, rest} = Messaging.from_wire(msg)
     {signature, msg} = Messaging.par(msg, :signature)
     {point, msg} = Messaging.par(msg, :pk)
-    {event, msg} = Event.parse(msg)
+    {event, <<>>} = Event.parse(msg)
 
     announcement = new(signature, point, event)
 
-    {announcement, msg}
+    {announcement, rest}
   end
 
   @spec calculate_signature_point(t(), non_neg_integer(), String.t()) :: any()
@@ -150,8 +163,9 @@ end
 
 defmodule ExFacto.Oracle.Attestation do
   alias ExFacto.Utils
-  alias Bitcoinex.Secp256k1.{Signature, PrivateKey, Point}
   alias ExFacto.Messaging
+  alias ExFacto.Oracle.Announcement
+  alias Bitcoinex.Secp256k1.{Signature, PrivateKey, Point, Schnorr}
 
   @type_oracle_attestation 55400
 
@@ -184,6 +198,73 @@ defmodule ExFacto.Oracle.Attestation do
     }
   end
 
+  @doc """
+    verify checks that the attestation is valid for the given announcement
+  """
+  def verify(announcement = %Announcement{}, attestation = %__MODULE__{}) do
+    with {_, true} <- {:verify_announcement, Announcement.verify(announcement)},
+         {_, true} <-
+           {:verify_match, verify_announcement_attestation_match(announcement, attestation)},
+         {_, true} <- {:verify_signatures, verify_outcome_signatures(attestation)} do
+      true
+    else
+      {:verify_announcement, {:error, msg}} ->
+        {:error, "invalid announcement: #{msg}"}
+
+      {:verify_match, {:error, msg}} ->
+        {:error, "attestation does not match announcement: #{msg}"}
+
+      {:verify_signatures, {:error, msg}} ->
+        {:error, "invalid attestation signatures: #{msg}"}
+    end
+  end
+
+  @doc """
+    verify_announcement_attestation_match checks that the announcement and attestation match
+    1. event_id
+    2. public_key
+    3. attestation outcomes are in announcement
+  """
+  def verify_announcement_attestation_match(
+        announcement = %Announcement{},
+        attestation = %__MODULE__{}
+      ) do
+    cond do
+      attestation.event_id != announcement.event.id ->
+        {:error, "announcement and attestation event ids do not match"}
+
+      attestation.public_key != announcement.public_key ->
+        {:error, "announcement and attestation public keys do not match"}
+
+      # check all outcomes are in announcement. This only works for enum
+      !Enum.all?(attestation.outcomes, fn outcome ->
+        Enum.member?(announcement.event.outcomes, outcome)
+      end) ->
+        {:error, "attestation outcome not in announcement"}
+
+      true ->
+        true
+    end
+  end
+
+  @doc """
+    verify_outcome_signatures checks all signatures are valid for the respective outcome
+  """
+  def verify_outcome_signatures(attestation = %__MODULE__{}) do
+    outcomes_signatures = Enum.zip(attestation.outcomes, attestation.signatures)
+    cond do
+      # check signature is valid for outcome
+      !Enum.all?(outcomes_signatures, fn {outcome, signature} ->
+        # check signature is valid for outcome
+        sighash = sighash(outcome) |> :binary.decode_unsigned()
+        Schnorr.verify_signature(attestation.public_key, sighash, signature)
+      end) ->
+        {:error, "invalid attestation signature"}
+
+      true -> true
+    end
+  end
+
   # https://github.com/discreetlogcontracts/dlcspecs/blob/master/Messaging.md#oracle_attestation
   @spec serialize(t()) :: binary
   def serialize(a = %__MODULE__{}) do
@@ -195,32 +276,47 @@ defmodule ExFacto.Oracle.Attestation do
       Utils.serialize_with_count(a.outcomes, fn o -> Messaging.ser(o, :utf8) end)
 
     msg =
-    Messaging.ser(a.event_id, :utf8) <>
-      Messaging.ser(a.public_key, :pk) <>
-      Messaging.ser(sig_ct, :u16) <>
-      ser_sigs <>
-      ser_outcomes
+      Messaging.ser(a.event_id, :utf8) <>
+        Messaging.ser(a.public_key, :pk) <>
+        Messaging.ser(sig_ct, :u16) <>
+        ser_sigs <>
+        ser_outcomes
 
     Messaging.to_wire(@type_oracle_attestation, msg)
   end
 
+  def to_hex(a = %__MODULE__{}), do: serialize(a) |> Utils.bin_to_hex()
+
   @spec parse(nonempty_binary) :: {t(), binary}
   def parse(msg) do
-    {_size, msg} = Messaging.from_wire(@type_oracle_attestation, msg)
+    # parse either hex or binary
+    case Utils.hex_to_bin(msg) do
+      {:ok, msg} -> do_parse(msg)
+      _ -> do_parse(msg)
+    end
+  end
+
+  defp do_parse(msg) do
+    {_type_oracle_attestation, msg, rest} = Messaging.from_wire(msg)
     {event_id, msg} = Messaging.par(msg, :utf8)
     {pubkey, msg} = Messaging.par(msg, :pk)
-    {sig_ct, msg} = Utils.get_counter(msg)
+    {sig_ct, msg} = Messaging.par(msg, :u16)
     {sigs, msg} = Messaging.parse_items(msg, sig_ct, [], &Messaging.parse_signature/1)
 
-    {outcomes, msg} =
+    {outcomes, <<>>} =
       Messaging.parse_items(msg, sig_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
 
     attestation = new(event_id, pubkey, sigs, outcomes)
-    {attestation, msg}
+    {attestation, rest}
   end
 
-  def sighash(outcome),
-    do: Utils.oracle_tagged_hash(outcome, "attestation/v0") |> :binary.encode_unsigned()
+  @spec sighash(String.t()) :: binary
+  def sighash(outcome) do
+    outcome
+    |> String.normalize(:nfc)
+    |> Utils.oracle_tagged_hash("attestation/v0")
+    |> :binary.encode_unsigned()
+  end
 
   @spec extract_decryption_key(t()) :: PrivateKey.t()
   def extract_decryption_key(attestation = %__MODULE__{}) do

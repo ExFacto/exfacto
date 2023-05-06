@@ -34,14 +34,17 @@ defmodule ExFacto.Event do
   def serialize(event) do
     {ct, ser_nonces} = Utils.serialize_with_count(event.nonce_points, &Point.x_bytes/1)
 
-    msg = Messaging.ser(ct, :u16) <>
-      ser_nonces <>
-      Messaging.ser(event.maturity_epoch, :u32) <>
-      serialize_event_descriptor(event.descriptor) <>
-      Messaging.ser(event.id, :utf8)
+    msg =
+      Messaging.ser(ct, :u16) <>
+        ser_nonces <>
+        Messaging.ser(event.maturity_epoch, :u32) <>
+        serialize_event_descriptor(event.descriptor) <>
+        Messaging.ser(event.id, :utf8)
 
-    Messaging.to_tlv(@type_oracle_event, msg)
+    Messaging.to_wire(@type_oracle_event, msg)
   end
+
+  def to_hex(event), do: serialize(event) |> Utils.bin_to_hex()
 
   def parse_nonce_point(msg) do
     {nonce_pt, msg} = Messaging.par(msg, 32)
@@ -50,14 +53,21 @@ defmodule ExFacto.Event do
   end
 
   def parse(msg) do
-    {_size, msg} = Messaging.from_tlv(@type_oracle_event, msg)
+    case Utils.hex_to_bin(msg) do
+      {:ok, msg} -> do_parse(msg)
+      _ -> do_parse(msg)
+    end
+  end
+
+  def do_parse(msg) do
+    {_type, msg, rest} = Messaging.from_wire(msg)
     {nonce_ct, msg} = Messaging.par(msg, :u16)
     {nonce_points, msg} = Messaging.parse_items(msg, nonce_ct, [], &parse_nonce_point/1)
     {maturity_epoch, msg} = Messaging.par(msg, :u32)
     {descriptor, msg} = parse_event_descriptor(msg)
-    {event_id, msg} = Messaging.par(msg, :utf8)
+    {event_id, <<>>} = Messaging.par(msg, :utf8)
     event = new(event_id, nonce_points, descriptor, maturity_epoch)
-    {event, msg}
+    {event, rest}
   end
 
   # this will be a more generic type once numeric descriptors
@@ -74,19 +84,21 @@ defmodule ExFacto.Event do
   def serialize_event_descriptor(descriptor) do
     {ct, ser_outcomes} =
       Utils.serialize_with_count(descriptor.outcomes, fn o -> Messaging.ser(o, :utf8) end)
+
     msg = Messaging.ser(ct, :u16) <> ser_outcomes
 
-    Messaging.to_tlv(@type_enum_event_descriptor, msg)
+    Messaging.to_wire(@type_enum_event_descriptor, msg)
   end
 
+  @spec parse_event_descriptor(binary) :: {%{outcomes: list}, any}
   def parse_event_descriptor(msg) do
-    {_size, msg} = Messaging.from_tlv(@type_enum_event_descriptor, msg)
+    {_type, msg, rest} = Messaging.from_wire(msg)
     {outcome_ct, msg} = Messaging.par(msg, :u16)
 
-    {outcomes, msg} =
+    {outcomes, <<>>} =
       Messaging.parse_items(msg, outcome_ct, [], fn msg -> Messaging.par(msg, :utf8) end)
 
-    {%{outcomes: outcomes}, msg}
+    {%{outcomes: outcomes}, rest}
   end
 
   # Assuming Enum.
